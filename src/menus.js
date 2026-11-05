@@ -60,7 +60,7 @@ function dilateDlg() {
     el('div', { class: 'row2' }, field('새 길이', num('dl-a', 1)), field('원래 길이', num('dl-b', 2))));
   openDlg('확대·축소', body, [{ label: '취소' }, { label: '확대·축소', primary: true, run: () => {
     const xf = { type: 'dil', c: doc.marks.center };
-    if (radioVal('dlm') === 'mark') { const r = doc.marks.ratio; if (r.segs) xf.rS = r.segs.slice(); else xf.rV = r.val; } else { const a = getNum('dl-a'), b = getNum('dl-b'); if (!b) { toast('원래 길이는 0이 될 수 없습니다'); return false; } xf.r = a / b; }
+    if (radioVal('dlm') === 'mark') { const r = doc.marks.ratio; if (r.pts) xf.rP = r.pts.slice(); else if (r.segs) xf.rS = r.segs.slice(); else xf.rV = r.val; } else { const a = getNum('dl-a'), b = getNum('dl-b'); if (!b) { toast('원래 길이는 0이 될 수 없습니다'); return false; } xf.r = a / b; }
     applyXf(xf);
   } }]);
 }
@@ -69,12 +69,13 @@ function reflectCmd() { if (doc.marks.mirror == null) return toast('먼저 거�
 function paramDialog(o) {
   const d = o ? o.d : { v: 1, min: 0, max: 10, step: 0.1, unit: 'none' };
   const body = el('div', { class: 'stack' },
-    el('div', { class: 'row2' }, field('이름', el('input', { id: 'pm-n', value: o ? o.label : 't' + ((doc.cnt.t || 0) + 1) })), field('값', num('pm-v', d.v))),
+    el('div', { class: 'row2' }, field('이름', el('input', { id: 'pm-n', value: o ? o.label : 't' + ((doc.cnt.t || 0) + 1) })), field('값 (수식을 넣으면 계산으로 바뀜)', el('input', { id: 'pm-v', value: d.v, inputmode: 'decimal' }))),
     field('단위', el('select', { id: 'pm-u' }, [['none', '없음'], ['dist', '거리 (cm)'], ['angle', '각 (' + (doc.prefs.deg ? '°' : 'rad') + ')']].map(([v, l]) => el('option', { value: v, selected: v === d.unit }, l)))),
     el('div', { class: 'row3' }, field('최솟값', num('pm-min', d.min)), field('최댓값', num('pm-max', d.max)), field('키보드 증감', num('pm-st', d.step))),
     el('p', { class: 'note' }, '선택한 뒤 + / − 키로 값을 바꾸고, 표시 ▸ 애니메이션으로 최솟값과 최댓값 사이를 오갑니다.'));
   openDlg(o ? '매개변수 편집' : '새 매개변수', body, [{ label: '취소' }, { label: o ? '확인' : '만들기', primary: true, run: () => {
-    const v = getNum('pm-v'); if (!isFinite(v)) { toast('값에 숫자를 입력하세요'); return false; }
+    const raw = $('#pm-v').value.trim(); const v = getNum('pm-v');
+    if (!isFinite(v) || !/^[-+0-9.eE]+$/.test(raw)) { if (!o) { toast('값에 숫자를 입력하세요'); return false; } let r2; try { r2 = userExprToStored(raw, false); } catch (e) { toast('숫자나 수식을 입력하세요: ' + e.message); return false; } if (r2.refs.includes(o.id)) { toast('자기 자신을 참조할 수 없습니다'); return false; } snap(); o.k = 'calc'; o.p = r2.refs; o.d = { expr: r2.stored, sx: o.d.sx, sy: o.d.sy }; moveToEnd(o.id); refresh(); toast('매개변수를 계산으로 바꿨습니다'); return; }
     const name = $('#pm-n').value.trim().replace(/\s+/g, '');
     if (!/^[A-Za-z_][A-Za-z_0-9]*$/.test(name)) { toast('이름은 영문자로 시작하는 영문·숫자 조합이어야 합니다 (예: t1, a)'); return false; }
     if (doc.objs.some(x => x !== o && (x.t === 'value' || x.t === 'fplot') && x.label === name)) { toast('같은 이름이 이미 있습니다'); return false; }
@@ -146,7 +147,7 @@ function prefsDlg() {
   const body = el('div', { class: 'stack' },
     el('div', { class: 'sub' }, '단위'),
     el('div', { class: 'row2' }, field('거리 단위', el('select', { id: 'pf-u' }, [['cm', '센티미터 (cm)'], ['in', '인치 (in)'], ['px', '픽셀 (px)']].map(([v, l]) => el('option', { value: v, selected: v === P.unit }, l)))),
-      field('각 단위', el('select', { id: 'pf-a' }, el('option', { value: 'deg', selected: P.deg }, '도 (°)'), el('option', { value: 'rad', selected: !P.deg }, '라디안')))),
+      field('각 단위', el('select', { id: 'pf-a' }, el('option', { value: 'deg', selected: P.deg && !P.directed }, '도 (°)'), el('option', { value: 'ddeg', selected: P.deg && P.directed }, '방향 있는 도 (−180°~180°)'), el('option', { value: 'rad', selected: !P.deg }, '라디안')))),
     el('div', { class: 'row3' }, field('기본 소수점', el('select', { id: 'pf-p' }, [0, 1, 2, 3, 4, 5].map(n => el('option', { value: n, selected: n === P.prec }, n + '자리')))), field('각 측정', precSel('pf-pa', P.precA)), field('거리·넓이', precSel('pf-pd', P.precD))),
     field('기타 값(비·계산 등)', precSel('pf-po', P.precO)),
     el('div', { class: 'sub' }, '레이블'),
@@ -156,7 +157,7 @@ function prefsDlg() {
     el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'pf-s', checked: P.snap }), '좌표계가 있을 때 점을 격자에 맞추기'),
     el('div', { class: 'row2' }, field('자취 기본 표본 수', num('pf-ln', P.locusN || 300, 10)), field('반복 최대 상 개수', num('pf-ic', P.iterCap || 30000, 1000))));
   openDlg('환경설정', body, [{ label: '취소' }, { label: '확인', primary: true, run: () => {
-    snap(); P.unit = $('#pf-u').value; P.deg = $('#pf-a').value === 'deg'; P.prec = +$('#pf-p').value;
+    snap(); P.unit = $('#pf-u').value; P.deg = $('#pf-a').value !== 'rad'; P.directed = $('#pf-a').value === 'ddeg'; P.prec = +$('#pf-p').value;
     const pv = id => $('#' + id).value === '' ? undefined : +$('#' + id).value; P.precA = pv('pf-pa'); P.precD = pv('pf-pd'); P.precO = pv('pf-po');
     P.autoLabel = $('#pf-l').checked; P.labelAll = $('#pf-la').checked; P.snap = $('#pf-s').checked;
     P.locusN = clamp(Math.round(getNum('pf-ln') || 300), 20, 5000); P.iterCap = clamp(Math.round(getNum('pf-ic') || 30000), 1000, 200000); refresh();
@@ -229,6 +230,7 @@ const MENUS = [
     { label: '그림으로 내보내기 (.png)', key: 'Ctrl+E', run: exportPNG },
     { label: '그림 가져오기…', run: importPictureDlg },
     { label: '웹 페이지로 내보내기 (.html)', run: exportWebPage },
+    ...(isStandalone() ? [{ label: '인쇄…', run: printSketch }] : []),
     sep,
     { label: '새 페이지', run: () => addPage() },
     { label: '페이지 복제', run: () => duplicatePage(book.cur) },
@@ -242,8 +244,11 @@ const MENUS = [
   { name: '편집', items: [
     { label: '실행 취소', key: 'Ctrl+Z', run: undo, en: () => undoStack.length > 0 },
     { label: '다시 실행', key: 'Ctrl+Y', run: redo, en: () => redoStack.length > 0 },
+    { label: '모두 실행 취소', run: undoAll, en: () => undoStack.length > 0 },
+    { label: '모두 다시 실행', run: redoAll, en: () => redoStack.length > 0 },
     sep,
     { label: '복사', key: 'Ctrl+C', run: copySel, en: () => sel.length > 0 },
+    { label: '그림으로 복사', run: copyAsPicture },
     { label: '붙여넣기', key: 'Ctrl+V', run: paste, en: () => !!clip },
     { label: '삭제', key: 'Del', run: deleteSel, en: () => sel.length > 0 },
     sep,
@@ -269,6 +274,7 @@ const MENUS = [
     { label: '맨 뒤로', run: () => layer(false), en: () => sel.length > 0 },
     { label: '속성…', run: () => propsDialog(), en: () => sel.length > 0 },
     { label: '환경설정…', run: prefsDlg },
+    { label: '색·글자 환경설정…', run: colorPrefsDlg },
   ] },
   { name: '표시', items: [
     { label: '선 굵기', sub: () => [[1, '가늘게'], [2, '보통'], [3, '굵게']].map(([v, l]) => ({ label: l, run: () => setProp(o => o.w = v), en: () => sel.length > 0 })) },
@@ -278,6 +284,8 @@ const MENUS = [
     { label: '텍스트 팔레트 보이기/숨기기', run: () => toggleTextPalette(), check: () => paletteOn },
     sep,
     { label: '레이블 보이기/숨기기', key: 'Ctrl+K', run: toggleLabels, en: () => sel.length > 0 },
+    { label: '레이블 붙이기…', run: labelManyDlg, en: () => sel.length > 0 },
+    { label: '다음 레이블 다시 설정', run: resetLabels },
     { label: '객체 숨기기', key: 'Ctrl+H', run: hideSel, en: () => sel.length > 0 },
     { label: '숨긴 객체 모두 보이기', run: showAllHidden },
     sep,
@@ -320,7 +328,7 @@ const MENUS = [
     { label: '중심점 표시', run: markCmd.center, en: () => S().n === 1 && S().pts.length === 1, hint: () => markDesc('center') },
     { label: '거울 표시', run: markCmd.mirror, en: () => S().n === 1 && S().str.length === 1, hint: () => markDesc('mirror') },
     { label: '각 표시', run: markCmd.angle, en: () => { const s = S(); return (s.n === 3 && s.pts.length === 3) || (s.n === 1 && (s.vals.length === 1 || s.os[0].t === 'amark')); }, hint: () => markDesc('angle') },
-    { label: '비율 표시', run: markCmd.ratio, en: () => { const s = S(); return (s.n === 2 && s.segs.length === 2) || (s.n === 1 && s.vals.length === 1); }, hint: () => markDesc('ratio') },
+    { label: '비율·배율 표시', run: markCmd.ratio, en: () => { const s = S(); return (s.n === 3 && s.pts.length === 3) || (s.n === 2 && s.segs.length === 2) || (s.n === 1 && s.vals.length === 1); }, hint: () => markDesc('ratio') },
     { label: '벡터 표시', run: markCmd.vector, en: () => { const s = S(); return s.n === 2 && s.pts.length === 2; }, hint: () => markDesc('vector') },
     { label: '거리 표시', run: markCmd.dist, en: () => { const s = S(); return s.n === 1 && s.vals.length === 1; }, hint: () => markDesc('dist') },
     sep,
@@ -377,6 +385,7 @@ const MENUS = [
       sep,
       ...[['line', '선 격자'], ['dots', '점 격자'], ['none', '격자 숨기기']].map(([v, l]) => ({ label: l, en: () => !!doc.coordId, check: () => { const c = obj(doc.coordId); return c && (v === 'none' ? c.d.grid === false : c.d.grid !== false && (!!c.d.dots === (v === 'dots'))); }, run: () => { snap(); const c = obj(doc.coordId); c.d.grid = v !== 'none'; c.d.dots = v === 'dots'; refresh(); } })),
       sep,
+      { label: '삼각 축 (x축을 π 단위로)', en: () => !!doc.coordId, check: () => { const c = obj(doc.coordId); return c && !!c.d.trig; }, run: () => { snap(); const c = obj(doc.coordId); c.d.trig = !c.d.trig; refresh(); } },
       { label: '축 보이기/숨기기', en: () => !!doc.coordId, check: () => { const c = obj(doc.coordId); return c && c.d.axes !== false; }, run: () => { snap(); const c = obj(doc.coordId); c.d.axes = c.d.axes === false; refresh(); } },
     ] },
     { label: '좌표계 보이기/숨기기', run: () => { if (!doc.coordId) return; snap(); const c = obj(doc.coordId); c.hidden = !c.hidden; refresh(); }, en: () => !!doc.coordId },
@@ -384,6 +393,7 @@ const MENUS = [
     sep,
     { label: '축 위에 값 그리기', run: plotValueOnAxis, en: () => { const s = S(); return s.n >= 1 && s.vals.length === s.n && s.vals.every(v => isFinite((G[v.id] || {}).v)); } },
     { label: '(x, y)로 그리기', run: () => { const v = S().vals; snap(); const pol = G[ensureCoord()].form === 'polar'; setSel([mkPlot({ v: v[0].id }, { v: v[1].id }, { polar: pol })]); }, en: () => { const s = S(); return s.n === 2 && s.vals.length === 2; } },
+    { label: '경로 위에 값 그리기', run: plotOnPathCmd, en: () => { const s = S(); return s.n === 2 && s.vals.length === 1 && s.os.some(isPath); } },
     { label: '점 그리기…', run: plotDlg },
     { label: '표 데이터 그리기', run: () => plotTableCmd && plotTableCmd(), en: () => typeof plotTableCmd === 'function' && S().n === 1 && S().os[0].t === 'table' },
     sep,

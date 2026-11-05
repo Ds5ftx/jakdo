@@ -12,7 +12,7 @@ const PAL_KO = { ink: '먹색', red: '빨강', orange: '주황', gold: '노랑',
 let THEME = {};
 function readTheme() {
   const cs = getComputedStyle(document.documentElement), v = n => cs.getPropertyValue(n).trim();
-  THEME = { paper: v('--paper'), ink: v('--ink'), grid: v('--grid'), axis: v('--axis'), sel: v('--sel'), hover: v('--hover'), muted: v('--muted'), chip: v('--chip'), chipLine: v('--chip-line'), btn: v('--btn-bg'), btnInk: v('--btn-ink') };
+  THEME = { _paper: null, paper: v('--paper'), ink: v('--ink'), grid: v('--grid'), axis: v('--axis'), sel: v('--sel'), hover: v('--hover'), muted: v('--muted'), chip: v('--chip'), chipLine: v('--chip-line'), btn: v('--btn-bg'), btnInk: v('--btn-ink') };
 }
 const col = c => (c && c[0] === '#') ? c : (PALETTE[c] || THEME.ink);
 function colOf(o) { if (o && o.pc && typeof paramColor === 'function') { const c = paramColor(o); if (c) return c; } return col(o && o.color); }
@@ -40,11 +40,12 @@ function recordTraces() {
     else if (o.t === 'circle' || o.t === 'cinterior') s = { c: { ...g.c }, r: g.r };
     else if (o.t === 'arc') s = { c: { ...g.c }, r: g.r, s: g.s, w: g.w };
     else if (o.t === 'polygon') s = { pts: g.pts.map(p => ({ ...p })) };
+    else if (o.t === 'fplot') s = { pts: fplotSamples(g, 200).map(q => q.p && { x: q.p.x, y: q.p.y }), fp: 1 };
     if (!s) continue;
     let a = traces.get(o.id); if (!a) traces.set(o.id, a = []);
     const last = a[a.length - 1];
-    if (last && JSON.stringify(last) === JSON.stringify(s)) continue;
-    a.push(s); if (a.length > 6000) a.splice(0, a.length - 6000);
+    if (last && JSON.stringify({ ...last, _at: 0 }) === JSON.stringify({ ...s, _at: 0 })) continue;
+    s._at = performance.now(); a.push(s); if (a.length > 6000) a.splice(0, a.length - 6000);
   }
   collectTables();
 }
@@ -100,6 +101,7 @@ function pathLocus(o, g) {
     if (g.kind === 'segment' || g.kind === 'ray' || g.kind === 'line') pathStraight(it, g.kind);
     else if (g.kind === 'circle' || g.kind === 'cinterior') pathCircle(it);
     else if (g.kind === 'arc') pathArc(it); else if (g.kind === 'polygon') pathPoly(it.pts, true);
+    else if (g.kind === 'fplot') { let pen = false; for (const p of it.pts) { if (!p) { pen = false; continue; } const q = toS(p); pen ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); pen = true; } }
   }
 }
 
@@ -165,6 +167,7 @@ function draw() {
   drawQueued = false;
   if (dirty) recompute();
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  if (THEME._paper == null) THEME._paper = THEME.paper; THEME.paper = doc.prefs.bg || THEME._paper;
   ctx.fillStyle = THEME.paper; ctx.fillRect(0, 0, W, H);
   const selSet = new Set(sel);
   const ordObjs = doc.objs.slice().sort((a, b) => (a.z || 0) - (b.z || 0));
@@ -172,6 +175,7 @@ function draw() {
   // 좌표계
   for (const co of doc.objs) if (co.t === 'coord' && !co.hidden && G[co.id]) drawCoord(G[co.id], co);
   // 자취
+  if (doc.prefs.fade > 0) { const lim = performance.now() - doc.prefs.fade * 1000; for (const [id, arr] of traces) { let k = 0; while (k < arr.length && arr[k] && arr[k]._at < lim) k++; if (k) arr.splice(0, k); } if ([...traces.values()].some(a => a.length)) setTimeout(requestDraw, 200); }
   for (const [id, arr] of traces) {
     const o = obj(id); if (!o) continue; const c = colOf(o);
     ctx.save(); ctx.setLineDash([]);
@@ -181,7 +185,7 @@ function draw() {
       ctx.stroke();
     } else {
       ctx.strokeStyle = rgba(c, 0.32); ctx.lineWidth = 1; ctx.beginPath();
-      for (const s of arr) if (s) pathGeom(o.t === 'cinterior' ? 'circle' : o.t, s);
+      for (const s of arr) if (s) { if (s.fp) { let pen = false; for (const p of s.pts) { if (!p) { pen = false; continue; } const q = toS(p); pen ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); pen = true; } } else pathGeom(o.t === 'cinterior' ? 'circle' : o.t, s); }
       ctx.stroke();
     }
     ctx.restore();
@@ -202,7 +206,7 @@ function draw() {
   for (const o of paths) {
     const g = G[o.id], hi = selSet.has(o.id) ? THEME.sel : hoverId === o.id ? THEME.hover : null; if (!hi) continue;
     ctx.save(); ctx.globalAlpha = selSet.has(o.id) ? 0.55 : 0.4; setStroke(o, 6, hi); ctx.beginPath();
-    if (o.t === 'locus') pathLocus(o, g); else if (o.t === 'fplot') pathFplotGeneral(g); else pathGeom(o.t, g);
+    if (o.t === 'locus') pathLocus(o, g); else if (o.t === 'fplot') pathFplotGeneral(g, o); else pathGeom(o.t, g);
     ctx.stroke(); ctx.restore();
   }
   for (const o of paths) {
@@ -210,7 +214,7 @@ function draw() {
     if (o.t === 'locus' && g.items) { ctx.globalAlpha *= g.kind === 'point' ? 1 : 0.55; setStroke(o); ctx.lineWidth = Math.max(0.8, ctx.lineWidth * 0.6); }
     else setStroke(o);
     ctx.beginPath();
-    if (o.t === 'locus') pathLocus(o, g); else if (o.t === 'fplot') pathFplotGeneral(g); else pathGeom(o.t, g);
+    if (o.t === 'locus') pathLocus(o, g); else if (o.t === 'fplot') pathFplotGeneral(g, o); else pathGeom(o.t, g);
     ctx.stroke();
     if (o.t === 'segment' && o.d.ticks) drawTicks(g, o.d.ticks, colOf(o));
     ctx.restore();
@@ -226,7 +230,7 @@ function draw() {
     ctx.save(); if (o.hidden) ctx.globalAlpha = 0.3; drawPointMark(p, o, selSet.has(o.id), hoverId === o.id); ctx.restore();
   }
   // 레이블
-  ctx.font = FONT_LABEL; ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+  ctx.font = labelFont(); ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
   for (const o of ordObjs) {
     o._lb = null;
     if (!o.showLabel || !o.label || o.hidden) continue; const a = labelAnchor(o, G[o.id]); if (!a) continue;
@@ -260,11 +264,11 @@ function drawAngleMark(o, g, hi) {
     ctx.stroke(); ctx.lineTo(V.x, V.y); ctx.closePath(); ctx.fillStyle = fillC; ctx.fill();
   } else {
     for (let k = 0; k < (o.d.n || 1); k++) {
-      const R = 20 + k * 4.5; ctx.beginPath(); ctx.arc(V.x, V.y, R, -aA, -(aA + sweep), true); ctx.stroke();
+      const R = (o.d.r || 20) + k * 4.5; ctx.beginPath(); ctx.arc(V.x, V.y, R, -aA, -(aA + sweep), true); ctx.stroke();
       if (k === 0) { ctx.lineTo(V.x, V.y); ctx.closePath(); ctx.fillStyle = fillC; ctx.fill(); }
     }
   }
-  o._arc = { V, R: 20, a0: aA, sw: sweep };
+  o._arc = { V, R: o.d.r || 20, a0: aA, sw: sweep };
   ctx.restore();
 }
 function drawScreenObj(o, selected, hover) {
@@ -315,7 +319,7 @@ function hitDist(o, g, P) {
   if (o.t === 'locus') {
     let best = Infinity;
     if (g.polys) for (const q of g.polys) for (let i = 0; i + 1 < q.length; i++) best = Math.min(best, distSeg(P, toS(q[i]), toS(q[i + 1])));
-    else if (g.items) for (const it of g.items) { const fake = { t: g.kind }; if (g.kind !== 'polygon') best = Math.min(best, hitDist(fake, it, P)); }
+    else if (g.items) for (const it of g.items) { if (g.kind === 'fplot') { let prev = null; for (const p of it.pts) { if (!p) { prev = null; continue; } const q = toS(p); if (prev) best = Math.min(best, distSeg(P, prev, q)); prev = q; } continue; } const fake = { t: g.kind }; if (g.kind !== 'polygon') best = Math.min(best, hitDist(fake, it, P)); }
     return best;
   }
   if (o.t === 'fplot') {

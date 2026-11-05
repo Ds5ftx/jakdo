@@ -47,7 +47,8 @@ function instantiateTool(tool, matched) {
     if (o.t === 'coord') continue;
     if (isScreenObj(o)) { const pos = nextScreenPos(); o.d.sx = pos.sx; o.d.sy = pos.sy; }
     const shown = tool.shown.includes(old); o.hidden = !shown || !!c.hidden;
-    add(o); if (o.label || o.t === 'point') giveLabel(o, shown && (o.t === 'point' ? doc.prefs.autoLabel && c.showLabel !== false : !!c.showLabel));
+    const keep = tool.keepLabels && o.label && !doc.objs.some(x => x.label === o.label); const lab0 = o.label;
+    add(o); if (o.label || o.t === 'point') giveLabel(o, shown && (o.t === 'point' ? (doc.prefs.autoLabel || keep) && c.showLabel !== false : !!c.showLabel)); if (keep) o.label = lab0;
     map.set(old, o.id); if (shown) out.push(o.id);
   }
   return out;
@@ -57,18 +58,21 @@ function toolLib() { try { return JSON.parse(localStorage.getItem('jakdo-toolfol
 function saveToolLib(a) { try { localStorage.setItem('jakdo-toolfolder', JSON.stringify(a)); return true; } catch (e) { toast('브라우저 저장소를 쓸 수 없습니다'); return false; } }
 function createToolDlg() {
   const body = el('div', { class: 'stack' }, field('도구 이름', el('input', { id: 'tl-n', value: '새 도구 ' + ((doc.tools || []).length + 1) })),
+    field('도구 설명 (스크립트 보기에 표시)', el('textarea', { id: 'tl-c', rows: 2 })),
     el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'tl-lib' }), '도구 폴더(이 브라우저)에도 저장해 다른 페이지·문서에서 쓰기'),
+    el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'tl-am' }), '같은 레이블의 객체가 있으면 주어진 것에 자동 연결'),
+    el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'tl-kl' }), '결과에 원래 레이블 쓰기 (겹치지 않을 때)'),
     el('p', { class: 'note' }, '선택한 객체 가운데 다른 선택 객체에 의존하지 않는 것이 주어진 것(입력), 나머지가 결과가 됩니다. 선택하지 않은 중간 객체는 도구를 쓸 때 숨겨진 채로 만들어집니다. 주어진 것을 고른 순서대로 클릭하게 됩니다.'));
   openDlg('사용자 도구 만들기', body, [{ label: '취소' }, { label: '만들기', primary: true, run: () => {
-    const t = buildTool($('#tl-n').value.trim() || '새 도구'); if (t.err) { toast(t.err); return false; }
+    const t = buildTool($('#tl-n').value.trim() || '새 도구'); if (t.err) { toast(t.err); return false; } t.comment = $('#tl-c').value.trim(); t.automatch = $('#tl-am').checked; t.keepLabels = $('#tl-kl').checked;
     snap(); doc.tools = doc.tools || []; doc.tools.push(t);
     if ($('#tl-lib').checked) { const a = toolLib().filter(x => x.name !== t.name); a.push(t); saveToolLib(a); }
     activateTool(t); toast('도구 “' + t.name + '”을(를) 만들었습니다. 주어진 것 ' + t.givens.filter(g => !g.auto).length + '개를 차례로 클릭하세요');
   } }]);
 }
 let ctool = null, ctoolMatched = [];
-function activateTool(t) { setTool('custom'); ctool = t; ctoolMatched = []; ctoolHint(); }
-function nextGiven() { while (ctool && ctoolMatched.length < ctool.givens.length && ctool.givens[ctoolMatched.length].auto) ctoolMatched.push(ensureCoord()); return ctool && ctool.givens[ctoolMatched.length]; }
+function activateTool(t) { const m = toolMatchesSelection(t); setTool('custom'); ctool = t; ctoolMatched = []; if (m) { snap(); const out = instantiateTool(t, m); setSel(out); toast('선택한 객체에 “' + t.name + '”을(를) 명령처럼 적용했습니다'); } ctoolHint(); }
+function nextGiven() { autoMatchNext(); while (ctool && ctoolMatched.length < ctool.givens.length && ctool.givens[ctoolMatched.length].auto) ctoolMatched.push(ensureCoord()); return ctool && ctool.givens[ctoolMatched.length]; }
 function ctoolHint() {
   if (!ctool) { $('#status-hint').textContent = '도구상자의 사용자 도구 단추에서 도구를 고르세요.'; return; }
   const g = nextGiven(); const manual = ctool.givens.filter(x => !x.auto);
@@ -89,7 +93,7 @@ function customToolDown(sx, sy) {
 }
 function scriptView(t) {
   t = t || ctool; if (!t) return toast('도구를 먼저 고르세요');
-  const body = el('div', { class: 'stack script' },
+  const body = el('div', { class: 'stack script' }, t.comment ? el('p', { class: 'note' }, t.comment) : null,
     el('div', { class: 'sub' }, '주어진 것'), el('ol', {}, t.givens.map(g => el('li', {}, KIND_KO[g.kind] + ' ' + g.label + (g.auto ? ' (자동 연결)' : '')))),
     el('div', { class: 'sub' }, '단계'), el('ol', {}, t.steps.map(s => el('li', {}, s))));
   openDlg('스크립트 보기 — ' + t.name, body, [{ label: '닫기', primary: true }]);
@@ -98,7 +102,7 @@ function manageToolsDlg() {
   const box = el('div', { class: 'stack' });
   const render = () => {
     box.innerHTML = '';
-    const sec = (title, list, del, extra) => { box.append(el('div', { class: 'sub' }, title)); if (!list.length) box.append(el('p', { class: 'note' }, '없음')); list.forEach((t, i) => box.append(el('div', { class: 'arch-row' }, el('div', {}, el('b', {}, t.name), el('small', {}, '주어진 것 ' + t.givens.filter(g => !g.auto).length + '개 · 단계 ' + t.steps.length + '개')), el('button', { class: 'btn', onclick: () => { activateTool(t); } }, '쓰기'), extra(t, i), el('button', { class: 'btn ghost', onclick: () => { del(i); render(); } }, '삭제')))); };
+    const sec = (title, list, del, extra) => { box.append(el('div', { class: 'sub' }, title)); if (!list.length) box.append(el('p', { class: 'note' }, '없음')); list.forEach((t, i) => box.append(el('div', { class: 'arch-row' }, el('div', {}, el('input', { value: t.name, 'aria-label': '도구 이름', onchange: e => { t.name = e.target.value.trim() || t.name; if (list !== doc.tools) saveToolLib(list); scheduleSave(); } }), el('small', {}, '주어진 것 ' + t.givens.filter(g => !g.auto).length + '개 · 단계 ' + t.steps.length + '개')), el('button', { class: 'btn', onclick: () => { activateTool(t); } }, '쓰기'), extra(t, i), el('button', { class: 'btn ghost', onclick: () => { del(i); render(); } }, '삭제')))); };
     sec('이 페이지의 도구', doc.tools || [], i => { snap(); doc.tools.splice(i, 1); }, t => el('button', { class: 'btn ghost', onclick: () => { const a = toolLib().filter(x => x.name !== t.name); a.push(t); saveToolLib(a); toast('도구 폴더에 저장했습니다'); } }, '폴더에 저장'));
     sec('도구 폴더 (이 브라우저)', toolLib(), i => { const a = toolLib(); a.splice(i, 1); saveToolLib(a); }, t => el('button', { class: 'btn ghost', onclick: () => scriptView(t) }, '스크립트'));
   };
@@ -121,6 +125,11 @@ function customToolMenu(btn) {
 /* ================= 분리 / 병합 ================= */
 function splitMergeInfo() {
   const s = S();
+  const tx = s.os.find(o => o.t === 'text'), pic = s.os.find(o => o.t === 'picture');
+  if (s.n === 1 && tx && tx.d.peg != null) return { label: '글상자를 점에서 분리', run: () => unpegText(tx) };
+  if (s.n === 2 && tx && s.pts.length === 1) return { label: '글상자를 점 ' + nm(s.pts[0].id) + '에 병합', run: () => pegText(tx, s.pts[0]) };
+  if (s.n === 2 && pic && pic.k === 'free' && s.pts.length === 1) return { label: '그림을 점 ' + nm(s.pts[0].id) + '에 병합', run: () => pegPicture(pic, s.pts[0]) };
+  if (s.n === 1 && pic && pic.k === 'pts' && pic.p.length === 1) return { label: '그림을 점에서 분리', run: () => { snap(); const g = G[pic.id]; pic.k = 'free'; pic.p = []; pic.d.x = g.TL.x; pic.d.y = g.TL.y; refresh(); } };
   if (s.n === 1 && s.pts.length === 1 && ['on', 'int', 'mid', 'plot', 'term', 'cxf', 'xf', 'unitlen'].includes(s.pts[0].k)) return { label: s.pts[0].k === 'xf' ? '점을 정의에서 분리' : '점을 부모에서 분리', run: () => splitPoint(s.pts[0]) };
   if (s.n === 2 && s.pts.length === 2 && s.pts[0].k === 'free' && !descendants([s.pts[0].id]).has(s.pts[1].id)) return { label: '점 ' + nm(s.pts[0].id) + '을(를) ' + nm(s.pts[1].id) + '에 병합', run: () => mergePoints(s.pts[0], s.pts[1]) };
   if (s.n === 2 && s.pts.length === 1 && s.pts[0].k === 'free' && s.os.some(isPath) && !descendants([s.pts[0].id]).has(s.os.find(isPath).id)) return { label: '점을 경로에 병합', run: () => mergeOnPath(s.pts[0], s.os.find(isPath)) };
@@ -199,5 +208,5 @@ function importPicture(file) {
   }; r.readAsDataURL(file);
 }
 function importPictureDlg() { const inp = el('input', { type: 'file', accept: 'image/*' }); inp.onchange = () => importPicture(inp.files[0]); inp.click(); }
-document.addEventListener('paste', e => { if (e.target.closest('input,textarea')) return; const it = [...(e.clipboardData ? e.clipboardData.items : [])].find(i => i.type.startsWith('image/')); if (it) { e.preventDefault(); importPicture(it.getAsFile()); } });
+document.addEventListener('paste', e => { if (e.target.closest('input,textarea')) return; const it = [...(e.clipboardData ? e.clipboardData.items : [])].find(i => i.type.startsWith('image/')); if (!it) return; e.preventDefault(); const pic = S().n === 1 && S().os[0].t === 'picture' ? S().os[0] : null; if (pic) { const r = new FileReader(); r.onload = () => { snap(); pic.d.src = r.result; refresh(); toast('그림을 바꿔 넣었습니다'); }; r.readAsDataURL(it.getAsFile()); } else importPicture(it.getAsFile()); });
 function cropPictureCmd() { const s = S(); const pic = s.os.find(o => o.t === 'picture'), pg = s.os.find(o => o.t === 'polygon'); snap(); pic.d.crop = pg.id; refresh(); toast('그림을 다각형 모양으로 잘랐습니다'); }

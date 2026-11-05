@@ -31,6 +31,8 @@ function parseRich(s) {
   while (i < s.length) {
     const c = s[i];
     if (c === '^' || c === '_') { i++; out.push({ k: c === '^' ? 'sup' : 'sub', c: group() }); continue; }
+    if (s.startsWith('\\overline', i)) { i += 9; out.push({ k: 'over', c: group() }); continue; }
+    if (s.startsWith('\\arc', i)) { i += 4; out.push({ k: 'arcm', c: group() }); continue; }
     if (s.startsWith('\\frac', i)) { i += 5; const a = group(), b = group(); out.push({ k: 'frac', a, b }); continue; }
     if (c === '√' && s[i + 1] === '{') { i++; out.push({ k: 'sqrt', c: group() }); continue; }
     if (s.startsWith('{#', i)) { const j = s.indexOf('}', i); const id = +s.slice(i + 2, j); i = j + 1; out.push({ k: 'hot', id }); continue; }
@@ -48,6 +50,7 @@ function layoutRich(nodes, size, font) {
     let L;
     if (n.k === 't' || n.k === 'hot') { const str = n.k === 'hot' ? hotText(n.id) : n.s; ctx.font = F(size); const ww = ctx.measureText(str).width; L = { w: ww, asc: size * 0.8, desc: size * 0.25, draw: (x, y) => { ctx.font = F(size); ctx.fillText(str, x, y); } }; }
     else if (n.k === 'sup' || n.k === 'sub') { const c = layoutRich(n.c, size * 0.7, font); const dy = n.k === 'sup' ? -size * 0.4 : size * 0.25; L = { w: c.w + 1, asc: Math.max(size * 0.8, c.asc - dy), desc: Math.max(size * 0.25, c.desc + dy), draw: (x, y) => c.draw(x, y + dy) }; }
+    else if (n.k === 'over' || n.k === 'arcm') { const c = layoutRich(n.c, size, font); const arc = n.k === 'arcm'; L = { w: c.w, asc: c.asc + 4, desc: c.desc, draw: (x, y) => { c.draw(x, y); const top = y - c.asc - 2; if (arc) { ctx.save(); ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 1.1; ctx.beginPath(); ctx.ellipse(x + c.w / 2, top + 2, c.w / 2, 3.5, 0, Math.PI, TAU); ctx.stroke(); ctx.restore(); } else ctx.fillRect(x, top, c.w, 1.1); } }; }
     else if (n.k === 'frac') { const a = layoutRich(n.a, size * 0.85, font), b = layoutRich(n.b, size * 0.85, font); const fw = Math.max(a.w, b.w) + 4, mid = size * 0.3; L = { w: fw + 2, asc: mid + a.asc + a.desc + 2, desc: Math.max(0, b.asc + b.desc + 2 - mid), draw: (x, y) => { a.draw(x + 1 + (fw - a.w) / 2, y - mid - 2 - a.desc); b.draw(x + 1 + (fw - b.w) / 2, y - mid + 2 + b.asc); ctx.fillRect(x + 1, y - mid - 0.6, fw, 1.2); } }; }
     else if (n.k === 'sqrt') { const c = layoutRich(n.c, size, font); const rw = size * 0.55; L = { w: c.w + rw + 3, asc: c.asc + 3, desc: c.desc, draw: (x, y) => { const top = y - c.asc - 2; ctx.save(); ctx.lineWidth = Math.max(1, size / 14); ctx.strokeStyle = ctx.fillStyle; ctx.beginPath(); ctx.moveTo(x, y - size * 0.3); ctx.lineTo(x + rw * 0.35, y - size * 0.4); ctx.lineTo(x + rw * 0.6, y + c.desc * 0.6); ctx.lineTo(x + rw, top); ctx.lineTo(x + rw + c.w + 2, top); ctx.stroke(); ctx.restore(); c.draw(x + rw + 1, y); } }; }
     if (!L) continue; const x0 = w; items.push([x0, L]); w += L.w; asc = Math.max(asc, L.asc); desc = Math.max(desc, L.desc);
@@ -64,12 +67,12 @@ function drawRichText(o, selected, hover) {
   const Ls = lines.map(l => layoutRich(parseRich(l), size, font));
   const w = Math.max(10, ...Ls.map(L => L.w)) + pad * 2; let h = pad * 2; const ys = [];
   for (const L of Ls) { h += L.asc; ys.push(h); h += L.desc + size * 0.25; }
-  const x = o.d.sx, y = o.d.sy; o._bb = { x, y, w, h };
+  textPos(o); const x = o.d.sx, y = o.d.sy; o._bb = { x, y, w, h };
   if (o.hidden) ctx.globalAlpha = 0.35;
   ctx.globalAlpha *= 0.82; ctx.fillStyle = THEME.paper; ctx.fillRect(x, y, w, h); ctx.globalAlpha = o.hidden ? 0.35 : 1;
   if (selected || hover) { ctx.strokeStyle = selected ? THEME.sel : THEME.hover; ctx.lineWidth = selected ? 2 : 1; ctx.setLineDash([3, 3]); ctx.strokeRect(x - 2, y - 2, w + 4, h + 4); ctx.setLineDash([]); }
   ctx.fillStyle = colOf(o);
-  Ls.forEach((L, i) => { L.draw(x + pad, y + ys[i]); if (o.d.underline) ctx.fillRect(x + pad, y + ys[i] + 2, L.w, 1); });
+  Ls.forEach((L, i) => { const ax = o.d.align === 'center' ? (w - pad * 2 - L.w) / 2 : o.d.align === 'right' ? (w - pad * 2 - L.w) : 0; L.draw(x + pad + ax, y + ys[i]); if (o.d.underline) ctx.fillRect(x + pad, y + ys[i] + 2, L.w, 1); });
   ctx.restore();
 }
 function textToEdit(s) { return (s || '').replace(/\{#(\d+)\}/g, (_, id) => { const o = obj(+id); return o ? '{' + (o.label || '?') + '}' : '{?}'; }); }
@@ -84,7 +87,7 @@ function toggleTextPalette(force) {
   const targets = () => S().os.filter(o => o.t === 'text' || o.t === 'value' || o.t === 'button');
   const apply = f => { const t = targets(); if (!t.length) return toast('글상자나 값을 선택하세요'); snap(); t.forEach(f); refresh(); };
   const ins = s => { const a = document.activeElement; if (a && a.classList && a.classList.contains('inline-edit')) { insertAt(a, s); return; } toast('글상자를 편집하는 중에 누르면 커서 위치에 들어갑니다'); };
-  const sym = ['π', 'θ', '°', '±', '×', '÷', '≤', '≥', '≠', '≈', '∠', '△', '⊥', '∥', '≅', '∽', '∞', '√{ }', 'x^{2}', 'a_{n}', '\\frac{a}{b}'];
+  const sym = ['\\overline{AB}', '\\arc{AB}', 'π', 'θ', '°', '±', '×', '÷', '≤', '≥', '≠', '≈', '∠', '△', '⊥', '∥', '≅', '∽', '∞', '√{ }', 'x^{2}', 'a_{n}', '\\frac{a}{b}'];
   pal = el('div', { id: 'txtpal', role: 'toolbar', 'aria-label': '텍스트 팔레트' },
     el('select', { 'aria-label': '글꼴', onchange: e => apply(o => o.d.font = e.target.value) }, el('option', { value: 'sans' }, '고딕'), el('option', { value: 'serif' }, '명조·수식'), el('option', { value: 'mono' }, '고정폭')),
     el('select', { 'aria-label': '크기', onchange: e => apply(o => o.d.size = +e.target.value) }, [11, 13, 15, 18, 22, 28, 36, 48].map(n => el('option', { value: n, selected: n === 15 }, n + 'px'))),
@@ -94,7 +97,9 @@ function toggleTextPalette(force) {
     el('span', { class: 'tp-sep' }),
     ...Object.keys(PALETTE).map(k => el('button', { class: 'sw sm', title: PAL_KO[k], 'aria-label': PAL_KO[k], style: `--c:${col(k)}`, onclick: () => apply(o => { o.color = k; delete o.pc; }) })),
     el('span', { class: 'tp-sep' }),
-    ...sym.map(sy => el('button', { class: 'tp-s', title: '편집 중인 글상자에 넣기', onmousedown: e => e.preventDefault(), onclick: () => ins(sy.replace('{ }', '{}')) }, sy.replace('\\frac{a}{b}', 'a/b').replace('x^{2}', 'x²').replace('a_{n}', 'aₙ').replace('√{ }', '√'))),
+    el('button', { class: 'tp-b', title: '왼쪽 정렬', onclick: () => apply(o => o.d.align = 'left') }, '⫷'), el('button', { class: 'tp-b', title: '가운데 정렬', onclick: () => apply(o => o.d.align = 'center') }, '≡'), el('button', { class: 'tp-b', title: '오른쪽 정렬', onclick: () => apply(o => o.d.align = 'right') }, '⫸'),
+    el('span', { class: 'tp-sep' }),
+    ...sym.map(sy => el('button', { class: 'tp-s', title: '편집 중인 글상자에 넣기', onmousedown: e => e.preventDefault(), onclick: () => ins(sy.replace('{ }', '{}')) }, sy.replace('\\overline{AB}', 'AB̄').replace('\\arc{AB}', '⌒AB').replace('\\frac{a}{b}', 'a/b').replace('x^{2}', 'x²').replace('a_{n}', 'aₙ').replace('√{ }', '√'))),
     el('button', { class: 'tp-x', 'aria-label': '팔레트 닫기', onclick: () => toggleTextPalette(false) }, '×'));
   $('#stage').append(pal);
 }
@@ -147,7 +152,9 @@ function propsExtra(list, one, body) {
     body.append(el('div', { class: 'row2' }, field('표본 수', num('px-n', one.d.n || (obj(one.p[one.p.length === 3 ? 2 : 1]) && obj(one.p[one.p.length === 3 ? 2 : 1]).t === 'point' ? 300 : 70), 1)), el('label', { class: 'chk', style: 'align-self:end' }, el('input', { type: 'checkbox', id: 'px-dc', checked: !!one.d.disc }), '점으로만 (불연속)')));
     fns.push(() => { one.d.n = clamp(Math.round(getNum('px-n') || 100), 3, 5000); one.d.disc = $('#px-dc').checked; });
   }
+  if (one && one.t === 'amark') { body.append(field('각 표시 크기 (px)', num('px-ar', one.d.r || 20, 1))); fns.push(() => { one.d.r = clamp(getNum('px-ar') || 20, 8, 80); }); }
   if (one && one.t === 'fplot') {
+    body.append(el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'px-fd', checked: !!one.d.disc }), '점으로만 (불연속)')); fns.push(() => { one.d.disc = $('#px-fd').checked; });
     const isP = one.k === 'param';
     body.append(el('div', { class: 'row3' }, field(isP ? 't 최솟값' : '정의역 최솟값', el('input', { id: 'px-a', type: 'number', value: isP ? one.d.tmin : (one.d.xmin ?? '') })), field(isP ? 't 최댓값' : '정의역 최댓값', el('input', { id: 'px-b', type: 'number', value: isP ? one.d.tmax : (one.d.xmax ?? '') })), field('표본 수', num('px-n', one.d.n || 400, 1))));
     fns.push(() => { const a = $('#px-a').value, b = $('#px-b').value; if (isP) { one.d.tmin = +a || 0; one.d.tmax = b === '' ? 1 : +b; } else { one.d.xmin = a === '' ? null : +a; one.d.xmax = b === '' ? null : +b; } one.d.n = clamp(Math.round(getNum('px-n') || 400), 10, 5000); });

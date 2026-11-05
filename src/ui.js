@@ -195,10 +195,10 @@ cv.addEventListener('pointermove', e => {
   const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top; cursorS = { x: sx, y: sy };
   if (drag) return dragMove(sx, sy, e);
   const tool = toolState.id;
-  if (tool === 'arrow' || tool === 'text' || tool === 'info' || tool === 'marker') { const h = hitTest(sx, sy); const nid = h ? h.id : null; if (nid !== hoverId) { hoverId = nid; requestDraw(); } }
+  if (tool === 'arrow' || tool === 'text' || tool === 'info' || tool === 'marker') { const h = hitTest(sx, sy); const nid = h ? h.id : null; if (nid !== hoverId) { hoverId = nid; requestDraw(); balloonAt(sx, sy, nid); } }
   else if (tool === 'point' || tool === 'compass' || tool === 'straight' || tool === 'polygon' || (tool === 'custom' && ctool && nextGiven() && nextGiven().kind === 'point')) {
     hoverId = null; const ex = pending ? [pending.p1] : [];
-    hoverCand = candidateAt(sx, sy, ex); hoverId = hoverCand.kind === 'on' ? hoverCand.path : hoverCand.kind === 'pt' ? hoverCand.id : null;
+    hoverCand = candidateAt(sx, sy, ex); if (pending) hoverCand = constrainCand(hoverCand, pending.p1); else if (tool === 'polygon' && polyPts.length) hoverCand = constrainCand(hoverCand, polyPts[polyPts.length - 1]); hoverId = hoverCand.kind === 'on' ? hoverCand.path : hoverCand.kind === 'pt' ? hoverCand.id : null;
     if (pending && pending.down && vdist({ x: sx, y: sy }, { x: pending.sx, y: pending.sy }) > 6) pending.moved = true;
     overlay = ctx2 => toolOverlay(ctx2); requestDraw();
   }
@@ -237,14 +237,14 @@ function toolOverlay(c2) {
   drawCand(cand, c2);
 }
 function finishTwoPoint(sx, sy) {
-  const tool = toolState.id; const c = candidateAt(sx, sy, [pending.p1]);
+  const tool = toolState.id; const c = constrainCand(candidateAt(sx, sy, [pending.p1]), pending.p1);
   if (c.kind === 'free' && vdist(c.s, toS(G[pending.p1])) < 4) { pending.second = false; return; }
   const id2 = realize(c); let nid;
   if (tool === 'compass') nid = mkCircle(pending.p1, id2); else nid = mkStraight(toolState.v.straight, pending.p1, id2);
   pending = null; overlay = ctx2 => toolOverlay(ctx2); setSel([nid]);
 }
 function polygonClick(sx, sy) {
-  const c = candidateAt(sx, sy);
+  let c = candidateAt(sx, sy); if (polyPts.length) c = constrainCand(c, polyPts[polyPts.length - 1]);
   if (polyPts.length >= 3 && c.kind === 'pt' && (c.id === polyPts[0] || c.id === polyPts[polyPts.length - 1])) return closePolygon();
   if (c.kind === 'pt' && polyPts.includes(c.id)) return;
   if (!polyPts.length) snap();
@@ -269,7 +269,7 @@ function arrowDown(sx, sy, e) {
   const dbl = now - lastClick.t < 380 && lastClick.id === h.id; lastClick = { t: now, id: h.id };
   if (dbl) { lastClick.t = 0; return doubleClick(o, h.part); }
   if (h.part === 'label') { snap(); drag = { mode: 'label', id: o.id, sx, sy, lo: { ...(o.lo || defaultLabelOffset(o)) }, moved: false }; return; }
-  drag = { mode: 'press', id: o.id, sx, sy, was: sel.includes(o.id), shift: e.shiftKey, moved: false };
+  drag = { mode: 'press', id: o.id, sx, sy, was: sel.includes(o.id), shift: e.shiftKey, moved: false, t0: performance.now() };
 }
 function moveRoots(ids) {
   const roots = new Map(); const seen = new Set();
@@ -312,7 +312,7 @@ function beginMove(d) {
 }
 function moveTo(d, sx, sy) {
   const w = toW(sx, sy);
-  for (const s of d.screens) { const o = obj(s.id); o.d.sx = s.sx + sx - d.sx; o.d.sy = s.sy + sy - d.sy; }
+  for (const s of d.screens) { const o = obj(s.id); o.d.sx = s.sx + sx - d.sx; o.d.sy = s.sy + sy - d.sy; if (o.d.peg != null && G[o.d.peg]) { const P0 = toS(G[o.d.peg]); o.d.pox = o.d.sx - P0.x; o.d.poy = o.d.sy - P0.y; } }
   for (const f0 of d.frees || []) { const o = obj(f0.id), dl = vsub(w, d.w0); if (f0.pts) o.d.pts = f0.pts.map(p => vadd(p, dl)); else { o.d.x = f0.x + dl.x; o.d.y = f0.y + dl.y; } }
   if (d.unit) { const o = obj(d.unit), O = G[o.p[0]]; o.d.u = Math.max(0.05, o.d.axis === 'y' ? w.y - O.y : w.x - O.x); dirty = true; recompute(); recordTraces(); requestDraw(); return; }
   let f;
@@ -336,6 +336,7 @@ function dragEnd(sx, sy, e) {
   if (d.mode === 'press') {
     const o = obj(d.id);
     if (o.t === 'button') { runButton(o); return; }
+    if (d.was && !d.shift && sel.length === 1 && performance.now() - (d.t0 || 0) < 600) { const list = hitAll(sx, sy); if (list.length > 1) { const i = list.indexOf(d.id); setSel([list[(i + 1) % list.length]]); toast('겹친 객체: ' + selName(obj(sel[0]))); return; } }
     if (d.was && d.shift) setSel(sel.filter(x => x !== d.id)); else if (!d.was) setSel([...sel, d.id]);
     return;
   }
@@ -404,7 +405,7 @@ function inlineText(o, sx, sy) {
   overlayInput(x, y, o ? textToEdit(o.d.text) : '', true, v => {
     if (v != null) v = textFromEdit(v);
     if (v == null) return; v = v.replace(/\s+$/, '');
-    if (!o) { if (!v) return; snap(); const t = add({ t: 'text', k: 'cap', d: { text: v, sx: x, sy: y, size: 15 } }); setSel([t.id]); }
+    if (!o) { if (!v) return; snap(); const t = add({ t: 'text', k: 'cap', d: { text: v, sx: x, sy: y, size: doc.prefs.capSize || 15, font: doc.prefs.capFont || 'sans' } }); setSel([t.id]); }
     else { snap(); if (!v) deleteObjs([o.id]); else o.d.text = v; refresh(); }
   }, { aria: '글상자 내용' });
 }
@@ -543,7 +544,7 @@ function markDesc(k) {
   if (k === 'center' || k === 'mirror') return obj(m) ? nm(m) : null;
   if (k === 'vector') return nm(m[0]) + ' → ' + nm(m[1]);
   if (k === 'angle') return m.pts ? '∠' + m.pts.map(nm).join('') : valueName(obj(m.val));
-  if (k === 'ratio') return m.segs ? 'm ' + nm(m.segs[0]) + ' / m ' + nm(m.segs[1]) : valueName(obj(m.val));
+  if (k === 'ratio') return m.pts ? '배율 ' + m.pts.map(nm).join('') : m.segs ? 'm ' + nm(m.segs[0]) + ' / m ' + nm(m.segs[1]) : valueName(obj(m.val));
   if (k === 'dist') return valueName(obj(m.val));
   return null;
 }
@@ -551,7 +552,7 @@ const markCmd = {
   center: () => { doc.marks.center = S().pts[0].id; toast('중심점 표시: ' + markDesc('center')); refresh(); },
   mirror: () => { doc.marks.mirror = S().str[0].id; toast('거울 표시: ' + markDesc('mirror')); refresh(); },
   angle: () => { const s = S(); doc.marks.angle = s.pts.length === 3 ? { pts: s.pts.map(o => o.id) } : s.os[0].t === 'amark' ? { pts: s.os[0].p.slice() } : { val: s.vals[0].id }; toast('각 표시: ' + markDesc('angle')); },
-  ratio: () => { const s = S(); doc.marks.ratio = s.segs.length === 2 ? { segs: s.segs.map(o => o.id) } : { val: s.vals[0].id }; toast('비율 표시: ' + markDesc('ratio')); },
+  ratio: () => { const s = S(); doc.marks.ratio = s.pts.length === 3 ? { pts: s.pts.map(o => o.id) } : s.segs.length === 2 ? { segs: s.segs.map(o => o.id) } : { val: s.vals[0].id }; toast('비율 표시: ' + markDesc('ratio')); },
   vector: () => { doc.marks.vector = S().pts.map(o => o.id); toast('벡터 표시: ' + markDesc('vector')); },
   dist: () => { doc.marks.dist = { val: S().vals[0].id }; toast('거리 표시: ' + markDesc('dist')); },
 };
@@ -607,7 +608,7 @@ function toggleTrace() { const s = S().os.filter(o => o.t === 'point' || isStrai
 
 /* ================= 애니메이션 ================= */
 const anims = new Map(); const moves = new Map(); let speedK = 1, animRAF = null, lastT = 0;
-function animatable(o) { return (o.t === 'point' && o.k === 'on') || (o.t === 'value' && o.k === 'param'); }
+function animatable(o) { return (o.t === 'point' && (o.k === 'on' || o.k === 'free')) || (o.t === 'value' && o.k === 'param'); }
 function startAnim(ids) { let n = 0; for (const id of ids) { const o = obj(id); if (o && animatable(o)) { anims.set(id, { dir: 1 }); n++; } } if (!n) return toast('경로 위의 점이나 매개변수를 선택하세요'); kick(); }
 function stopAnim(ids) { if (ids) ids.forEach(id => anims.delete(id)); else { anims.clear(); moves.clear(); } for (const o of doc.objs) if (o.t === 'button' && o.d.act === 'anim') o._running = o.p.some(id => anims.has(id)); updateMotion(); requestDraw(); scheduleSave(); }
 function kick() { updateMotion(); if (!animRAF) { lastT = performance.now(); animRAF = requestAnimationFrame(step); } }
@@ -617,6 +618,7 @@ function step(ts) {
   for (const [id, a] of anims) {
     const o = obj(id); if (!o) { anims.delete(id); continue; }
     if (o.t === 'value') { const d = o.d, span = (d.max - d.min) || 1; d.v += a.dir * span / 5 * dt * speedK * (a.speed || 1); if (d.v > d.max) { d.v = d.max; a.dir = -1; if (a.once) anims.delete(id); } if (d.v < d.min) { d.v = d.min; a.dir = 1; if (a.once) anims.delete(id); } continue; }
+    if (o.t === 'point' && o.k === 'free') { stepFreePoint(o, a, dt); continue; }
     const po = obj(o.p[0]), g = G[po.id]; if (!g) continue;
     const L = Math.max(1e-6, pathLength(po, g)); const dtp = a.dir * 3.2 * speedK * (a.speed || 1) * dt / L;
     let t = o.d.t + dtp;

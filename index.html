@@ -162,6 +162,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .help td { padding: 4px 0; color: var(--muted); }
 .help p { margin: 0; font-size: 13.5px; line-height: 1.6; }
 .inline-edit { position: absolute; z-index: 25; min-width: 160px; font: 15px var(--f-ui); background: var(--paper); color: var(--ink); border: 1.5px solid var(--accent); border-radius: 4px; padding: 3px 6px; box-shadow: var(--shadow); }
+#balloon { position: absolute; z-index: 21; max-width: 260px; background: var(--ink); color: var(--paper); font-size: 12px; line-height: 1.45; padding: 5px 9px; border-radius: 6px; pointer-events: none; }
+#stage.dropping { outline: 3px dashed var(--accent); outline-offset: -6px; }
+#print-area { display: none; }
+@media print { #app { display: none !important; } #print-area { display: block !important; } #print-area img { width: 100%; } #print-area h1 { font: 600 16px var(--f-ui); } body { padding: 0; background: #fff; } }
 #toast { position: absolute; left: 50%; top: 52px; transform: translateX(-50%); z-index: 60; background: var(--ink); color: var(--paper); padding: 8px 14px; border-radius: 8px; font-size: 13.5px; box-shadow: var(--shadow); max-width: calc(100% - 32px); text-align: center; }
 @media (max-width: 640px) {
   .brand span { display: none; }
@@ -240,10 +244,14 @@ function add(o) {
   doc.objs.push(o); byId.set(o.id, o); dirty = true; return o;
 }
 function defaultColor(o) {
-  if (o.t === 'point') return 'red';
-  if (isInterior(o)) return ['gold', 'blue', 'green', 'magenta', 'orange', 'teal'][(o.id || 0) % 6];
-  if (o.t === 'locus') return 'purple';
-  if (o.t === 'fplot') return 'blue';
+  const pc = k => (typeof prefColor === 'function' ? prefColor(k) : null);
+  if (o.t === 'point') return pc('point') || 'red';
+  if (isInterior(o)) return pc('interior') || ['gold', 'blue', 'green', 'magenta', 'orange', 'teal'][(o.id || 0) % 6];
+  if (o.t === 'locus') return pc('locus') || 'purple';
+  if (o.t === 'fplot') return pc('plot') || 'blue';
+  if (isStraight(o)) return pc('straight') || 'ink';
+  if (o.t === 'circle' || o.t === 'arc') return pc('circle') || 'ink';
+  if (o.t === 'text') return pc('text') || 'ink';
   return 'ink';
 }
 
@@ -434,6 +442,7 @@ function buildMap(x, Gx) {
     let r;
     if (x.rV != null) r = valNum(x.rV, Gx);
     else if (x.rS) { const s1 = P(x.rS[0]), s2 = P(x.rS[1]); if (!s1 || !s2) return null; r = vdist(s1.a, s1.b) / vdist(s2.a, s2.b); }
+    else if (x.rP) { const a = P(x.rP[0]), b = P(x.rP[1]), c = P(x.rP[2]); if (!a || !b || !c) return null; const d = vsub(b, a); r = vdot(vsub(c, a), d) / vdot(d, d); }
     else r = x.r;
     if (!isFinite(r)) return null;
     return { f: p => vadd(C, vmul(vsub(p, C), r)), det: 1, k: Math.abs(r) };
@@ -448,7 +457,7 @@ function xfRefs(x) {
   const r = [];
   if (x.vec) r.push(...x.vec); if (x.c != null) r.push(x.c); if (x.m != null) r.push(x.m);
   for (const k of ['dxV', 'dyV', 'distV', 'angV', 'rV']) if (x[k] != null) r.push(x[k]);
-  if (x.angP) r.push(...x.angP); if (x.rS) r.push(...x.rS);
+  if (x.angP) r.push(...x.angP); if (x.rS) r.push(...x.rS); if (x.rP) r.push(...x.rP);
   return r;
 }
 function xformGeom(t, g, M) {
@@ -576,6 +585,7 @@ const COMP = {
         const r = rawIntersections(oa, ga, ob, gb)[d.i]; return r && r.ok ? r.p : null;
       }
       case 'mid': { const g = PG(o, Gx, 0); return g ? lerp(g.a, g.b, 0.5) : null; }
+      case 'onv': { const po = obj(o.p[0]), g = PG(o, Gx, 0), v = valNum(o.p[1], Gx); return g && isFinite(v) ? pathAt(po, g, v) : null; }
       case 'term': { const g = PG(o, Gx, 0); return g && g.term && g.term[d.i] ? { ...g.term[d.i] } : null; }
       case 'cxf': { const g = PG(o, Gx, 0); if (!g) return null; const q = cxfMapper(o.p[1], o.p[2], Gx)(g); return okp(q) ? { x: q.x, y: q.y } : null; }
       case 'xf': { const g = PG(o, Gx, 0); const M = buildMap(d.xf, Gx); return g && M ? xformGeom('point', g, M) : null; }
@@ -693,7 +703,7 @@ function computeValue(o, Gx) {
     case 'perim': { const s = g(0), t = po(0); if (!s) break; if (t.t === 'polygon') { const L = polyLens(s.pts, true); r = D(L[L.length - 1]); } else if (t.t === 'sector') r = D(Math.abs(s.w) * s.r + 2 * s.r); else if (t.t === 'arcseg') r = D(Math.abs(s.w) * s.r + 2 * s.r * Math.sin(Math.min(Math.abs(s.w), TAU) / 2)); break; }
     case 'circum': { const s = g(0); if (s) r = D(TAU * s.r); break; }
     case 'radius': { const s = g(0); if (s) r = D(s.r); break; }
-    case 'angle': { const a = g(0), v = g(1), b = g(2); if (a && v && b) { const t = Math.abs(signedAngle(a, v, b)); r = A(t); } break; }
+    case 'angle': { const a = g(0), v = g(1), b = g(2); if (a && v && b) { const sa = signedAngle(a, v, b); r = A(doc.prefs.directed ? sa : Math.abs(sa)); } break; }
     case 'area': {
       const s = g(0), t = po(0); if (!s) break;
       if (t.t === 'polygon') r = AR(polyArea(s.pts));
@@ -854,6 +864,7 @@ function computeLocus(o, Gx) {
     return { polys };
   }
   const items = [];
+  if (tgt.t === 'fplot') { for (let i = 0; i <= n; i++) { const g = sampleAt(t0 + (t1 - t0) * i / n); if (g) items.push({ pts: fplotSamples(g, 160).map(s => s.p) }); } return { kind: 'fplot', items }; }
   for (let i = 0; i <= n; i++) { const g = sampleAt(t0 + (t1 - t0) * i / n); if (g) items.push(JSON.parse(JSON.stringify(g))); }
   return { kind: tgt.t, items };
 }
@@ -884,7 +895,7 @@ const PAL_KO = { ink: '먹색', red: '빨강', orange: '주황', gold: '노랑',
 let THEME = {};
 function readTheme() {
   const cs = getComputedStyle(document.documentElement), v = n => cs.getPropertyValue(n).trim();
-  THEME = { paper: v('--paper'), ink: v('--ink'), grid: v('--grid'), axis: v('--axis'), sel: v('--sel'), hover: v('--hover'), muted: v('--muted'), chip: v('--chip'), chipLine: v('--chip-line'), btn: v('--btn-bg'), btnInk: v('--btn-ink') };
+  THEME = { _paper: null, paper: v('--paper'), ink: v('--ink'), grid: v('--grid'), axis: v('--axis'), sel: v('--sel'), hover: v('--hover'), muted: v('--muted'), chip: v('--chip'), chipLine: v('--chip-line'), btn: v('--btn-bg'), btnInk: v('--btn-ink') };
 }
 const col = c => (c && c[0] === '#') ? c : (PALETTE[c] || THEME.ink);
 function colOf(o) { if (o && o.pc && typeof paramColor === 'function') { const c = paramColor(o); if (c) return c; } return col(o && o.color); }
@@ -912,11 +923,12 @@ function recordTraces() {
     else if (o.t === 'circle' || o.t === 'cinterior') s = { c: { ...g.c }, r: g.r };
     else if (o.t === 'arc') s = { c: { ...g.c }, r: g.r, s: g.s, w: g.w };
     else if (o.t === 'polygon') s = { pts: g.pts.map(p => ({ ...p })) };
+    else if (o.t === 'fplot') s = { pts: fplotSamples(g, 200).map(q => q.p && { x: q.p.x, y: q.p.y }), fp: 1 };
     if (!s) continue;
     let a = traces.get(o.id); if (!a) traces.set(o.id, a = []);
     const last = a[a.length - 1];
-    if (last && JSON.stringify(last) === JSON.stringify(s)) continue;
-    a.push(s); if (a.length > 6000) a.splice(0, a.length - 6000);
+    if (last && JSON.stringify({ ...last, _at: 0 }) === JSON.stringify({ ...s, _at: 0 })) continue;
+    s._at = performance.now(); a.push(s); if (a.length > 6000) a.splice(0, a.length - 6000);
   }
   collectTables();
 }
@@ -972,6 +984,7 @@ function pathLocus(o, g) {
     if (g.kind === 'segment' || g.kind === 'ray' || g.kind === 'line') pathStraight(it, g.kind);
     else if (g.kind === 'circle' || g.kind === 'cinterior') pathCircle(it);
     else if (g.kind === 'arc') pathArc(it); else if (g.kind === 'polygon') pathPoly(it.pts, true);
+    else if (g.kind === 'fplot') { let pen = false; for (const p of it.pts) { if (!p) { pen = false; continue; } const q = toS(p); pen ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); pen = true; } }
   }
 }
 
@@ -1037,6 +1050,7 @@ function draw() {
   drawQueued = false;
   if (dirty) recompute();
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  if (THEME._paper == null) THEME._paper = THEME.paper; THEME.paper = doc.prefs.bg || THEME._paper;
   ctx.fillStyle = THEME.paper; ctx.fillRect(0, 0, W, H);
   const selSet = new Set(sel);
   const ordObjs = doc.objs.slice().sort((a, b) => (a.z || 0) - (b.z || 0));
@@ -1044,6 +1058,7 @@ function draw() {
   // 좌표계
   for (const co of doc.objs) if (co.t === 'coord' && !co.hidden && G[co.id]) drawCoord(G[co.id], co);
   // 자취
+  if (doc.prefs.fade > 0) { const lim = performance.now() - doc.prefs.fade * 1000; for (const [id, arr] of traces) { let k = 0; while (k < arr.length && arr[k] && arr[k]._at < lim) k++; if (k) arr.splice(0, k); } if ([...traces.values()].some(a => a.length)) setTimeout(requestDraw, 200); }
   for (const [id, arr] of traces) {
     const o = obj(id); if (!o) continue; const c = colOf(o);
     ctx.save(); ctx.setLineDash([]);
@@ -1053,7 +1068,7 @@ function draw() {
       ctx.stroke();
     } else {
       ctx.strokeStyle = rgba(c, 0.32); ctx.lineWidth = 1; ctx.beginPath();
-      for (const s of arr) if (s) pathGeom(o.t === 'cinterior' ? 'circle' : o.t, s);
+      for (const s of arr) if (s) { if (s.fp) { let pen = false; for (const p of s.pts) { if (!p) { pen = false; continue; } const q = toS(p); pen ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); pen = true; } } else pathGeom(o.t === 'cinterior' ? 'circle' : o.t, s); }
       ctx.stroke();
     }
     ctx.restore();
@@ -1074,7 +1089,7 @@ function draw() {
   for (const o of paths) {
     const g = G[o.id], hi = selSet.has(o.id) ? THEME.sel : hoverId === o.id ? THEME.hover : null; if (!hi) continue;
     ctx.save(); ctx.globalAlpha = selSet.has(o.id) ? 0.55 : 0.4; setStroke(o, 6, hi); ctx.beginPath();
-    if (o.t === 'locus') pathLocus(o, g); else if (o.t === 'fplot') pathFplotGeneral(g); else pathGeom(o.t, g);
+    if (o.t === 'locus') pathLocus(o, g); else if (o.t === 'fplot') pathFplotGeneral(g, o); else pathGeom(o.t, g);
     ctx.stroke(); ctx.restore();
   }
   for (const o of paths) {
@@ -1082,7 +1097,7 @@ function draw() {
     if (o.t === 'locus' && g.items) { ctx.globalAlpha *= g.kind === 'point' ? 1 : 0.55; setStroke(o); ctx.lineWidth = Math.max(0.8, ctx.lineWidth * 0.6); }
     else setStroke(o);
     ctx.beginPath();
-    if (o.t === 'locus') pathLocus(o, g); else if (o.t === 'fplot') pathFplotGeneral(g); else pathGeom(o.t, g);
+    if (o.t === 'locus') pathLocus(o, g); else if (o.t === 'fplot') pathFplotGeneral(g, o); else pathGeom(o.t, g);
     ctx.stroke();
     if (o.t === 'segment' && o.d.ticks) drawTicks(g, o.d.ticks, colOf(o));
     ctx.restore();
@@ -1098,7 +1113,7 @@ function draw() {
     ctx.save(); if (o.hidden) ctx.globalAlpha = 0.3; drawPointMark(p, o, selSet.has(o.id), hoverId === o.id); ctx.restore();
   }
   // 레이블
-  ctx.font = FONT_LABEL; ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+  ctx.font = labelFont(); ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
   for (const o of ordObjs) {
     o._lb = null;
     if (!o.showLabel || !o.label || o.hidden) continue; const a = labelAnchor(o, G[o.id]); if (!a) continue;
@@ -1132,11 +1147,11 @@ function drawAngleMark(o, g, hi) {
     ctx.stroke(); ctx.lineTo(V.x, V.y); ctx.closePath(); ctx.fillStyle = fillC; ctx.fill();
   } else {
     for (let k = 0; k < (o.d.n || 1); k++) {
-      const R = 20 + k * 4.5; ctx.beginPath(); ctx.arc(V.x, V.y, R, -aA, -(aA + sweep), true); ctx.stroke();
+      const R = (o.d.r || 20) + k * 4.5; ctx.beginPath(); ctx.arc(V.x, V.y, R, -aA, -(aA + sweep), true); ctx.stroke();
       if (k === 0) { ctx.lineTo(V.x, V.y); ctx.closePath(); ctx.fillStyle = fillC; ctx.fill(); }
     }
   }
-  o._arc = { V, R: 20, a0: aA, sw: sweep };
+  o._arc = { V, R: o.d.r || 20, a0: aA, sw: sweep };
   ctx.restore();
 }
 function drawScreenObj(o, selected, hover) {
@@ -1187,7 +1202,7 @@ function hitDist(o, g, P) {
   if (o.t === 'locus') {
     let best = Infinity;
     if (g.polys) for (const q of g.polys) for (let i = 0; i + 1 < q.length; i++) best = Math.min(best, distSeg(P, toS(q[i]), toS(q[i + 1])));
-    else if (g.items) for (const it of g.items) { const fake = { t: g.kind }; if (g.kind !== 'polygon') best = Math.min(best, hitDist(fake, it, P)); }
+    else if (g.items) for (const it of g.items) { if (g.kind === 'fplot') { let prev = null; for (const p of it.pts) { if (!p) { prev = null; continue; } const q = toS(p); if (prev) best = Math.min(best, distSeg(P, prev, q)); prev = q; } continue; } const fake = { t: g.kind }; if (g.kind !== 'polygon') best = Math.min(best, hitDist(fake, it, P)); }
     return best;
   }
   if (o.t === 'fplot') {
@@ -1472,7 +1487,7 @@ function curveIntersections(oa, ga, ob, gb) {
 /* ================= 좌표계 격자 그리기 (극·직사각) ================= */
 function drawCoord(co, o) {
   const b = viewBoundsFn(), O = toS(co.o), ux = co.ux * view.s, uy = co.uy * view.s;
-  const sx = niceStep(ux), sy = co.form === 'rect' ? niceStep(uy) : sx;
+  const trig = !!o.d.trig; let sx = niceStep(ux); if (trig) { const half = Math.PI / 2; sx = half * Math.max(1, Math.round(niceStep(ux * half) )); } const sy = co.form === 'rect' ? niceStep(uy) : (trig ? niceStep(uy) : sx);
   ctx.save(); ctx.lineWidth = 1; ctx.setLineDash([]);
   const gx0 = Math.ceil((b.x0 - co.o.x) / co.ux / sx) * sx, gx1 = (b.x1 - co.o.x) / co.ux;
   const gy0 = Math.ceil((b.y0 - co.o.y) / co.uy / sy) * sy, gy1 = (b.y1 - co.o.y) / co.uy;
@@ -1494,16 +1509,17 @@ function drawCoord(co, o) {
   if (sel.includes(o.id) || hoverId === o.id) { ctx.strokeStyle = sel.includes(o.id) ? THEME.sel : THEME.hover; ctx.globalAlpha = 0.5; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(0, O.y); ctx.lineTo(W, O.y); ctx.moveTo(O.x, 0); ctx.lineTo(O.x, H); ctx.stroke(); ctx.globalAlpha = 1; }
   if (o.d.ticks !== false) {
     ctx.font = '11px "IBM Plex Sans KR", system-ui, sans-serif'; ctx.fillStyle = THEME.muted; ctx.strokeStyle = THEME.axis; ctx.lineWidth = 1;
-    const lab = v => String(+v.toFixed(6)).replace('-', '−');
+    const lab = v => String(+v.toFixed(6)).replace('-', '−'); const labX = v => trig ? piLabel(Math.round(v / (Math.PI / 2))) : lab(v);
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    for (let x = gx0; x <= gx1; x += sx) { if (Math.abs(x) < sx / 2) continue; const p = O.x + x * ux; ctx.beginPath(); ctx.moveTo(p, O.y - 3); ctx.lineTo(p, O.y + 3); ctx.stroke(); ctx.fillText(lab(x), p, clamp(O.y + 5, 2, H - 14)); }
+    for (let x = gx0; x <= gx1; x += sx) { if (Math.abs(x) < sx / 2) continue; const p = O.x + x * ux; ctx.beginPath(); ctx.moveTo(p, O.y - 3); ctx.lineTo(p, O.y + 3); ctx.stroke(); ctx.fillText(labX(x), p, clamp(O.y + 5, 2, H - 14)); }
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     for (let y = gy0; y <= gy1; y += sy) { if (Math.abs(y) < sy / 2) continue; const p = O.y - y * uy; ctx.beginPath(); ctx.moveTo(O.x - 3, p); ctx.lineTo(O.x + 3, p); ctx.stroke(); ctx.fillText(lab(y), clamp(O.x - 6, 22, W - 2), p); }
     ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillText('0', O.x - 5, O.y + 4);
   }
   ctx.restore();
 }
-function pathFplotGeneral(g) {
+function pathFplotGeneral(g, o) {
+  if (o && o.d && o.d.disc) { for (const s of fplotSamples(g, Math.min(g.n || 120, 400))) if (s.p) { const q = toS(s.p); ctx.moveTo(q.x + 1.6, q.y); ctx.arc(q.x, q.y, 1.6, 0, TAU); } return; }
   if ((g.form || 'yx') === 'yx') return pathFplot(g);
   const S = fplotSamples(g); let pen = false, prev = null;
   for (const s of S) { if (!s.p) { pen = false; continue; } const q = toS(s.p); if (pen && prev && vdist(prev, q) > Math.max(W, H)) pen = false; pen ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); pen = true; prev = q; }
@@ -1712,10 +1728,10 @@ cv.addEventListener('pointermove', e => {
   const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top; cursorS = { x: sx, y: sy };
   if (drag) return dragMove(sx, sy, e);
   const tool = toolState.id;
-  if (tool === 'arrow' || tool === 'text' || tool === 'info' || tool === 'marker') { const h = hitTest(sx, sy); const nid = h ? h.id : null; if (nid !== hoverId) { hoverId = nid; requestDraw(); } }
+  if (tool === 'arrow' || tool === 'text' || tool === 'info' || tool === 'marker') { const h = hitTest(sx, sy); const nid = h ? h.id : null; if (nid !== hoverId) { hoverId = nid; requestDraw(); balloonAt(sx, sy, nid); } }
   else if (tool === 'point' || tool === 'compass' || tool === 'straight' || tool === 'polygon' || (tool === 'custom' && ctool && nextGiven() && nextGiven().kind === 'point')) {
     hoverId = null; const ex = pending ? [pending.p1] : [];
-    hoverCand = candidateAt(sx, sy, ex); hoverId = hoverCand.kind === 'on' ? hoverCand.path : hoverCand.kind === 'pt' ? hoverCand.id : null;
+    hoverCand = candidateAt(sx, sy, ex); if (pending) hoverCand = constrainCand(hoverCand, pending.p1); else if (tool === 'polygon' && polyPts.length) hoverCand = constrainCand(hoverCand, polyPts[polyPts.length - 1]); hoverId = hoverCand.kind === 'on' ? hoverCand.path : hoverCand.kind === 'pt' ? hoverCand.id : null;
     if (pending && pending.down && vdist({ x: sx, y: sy }, { x: pending.sx, y: pending.sy }) > 6) pending.moved = true;
     overlay = ctx2 => toolOverlay(ctx2); requestDraw();
   }
@@ -1754,14 +1770,14 @@ function toolOverlay(c2) {
   drawCand(cand, c2);
 }
 function finishTwoPoint(sx, sy) {
-  const tool = toolState.id; const c = candidateAt(sx, sy, [pending.p1]);
+  const tool = toolState.id; const c = constrainCand(candidateAt(sx, sy, [pending.p1]), pending.p1);
   if (c.kind === 'free' && vdist(c.s, toS(G[pending.p1])) < 4) { pending.second = false; return; }
   const id2 = realize(c); let nid;
   if (tool === 'compass') nid = mkCircle(pending.p1, id2); else nid = mkStraight(toolState.v.straight, pending.p1, id2);
   pending = null; overlay = ctx2 => toolOverlay(ctx2); setSel([nid]);
 }
 function polygonClick(sx, sy) {
-  const c = candidateAt(sx, sy);
+  let c = candidateAt(sx, sy); if (polyPts.length) c = constrainCand(c, polyPts[polyPts.length - 1]);
   if (polyPts.length >= 3 && c.kind === 'pt' && (c.id === polyPts[0] || c.id === polyPts[polyPts.length - 1])) return closePolygon();
   if (c.kind === 'pt' && polyPts.includes(c.id)) return;
   if (!polyPts.length) snap();
@@ -1786,7 +1802,7 @@ function arrowDown(sx, sy, e) {
   const dbl = now - lastClick.t < 380 && lastClick.id === h.id; lastClick = { t: now, id: h.id };
   if (dbl) { lastClick.t = 0; return doubleClick(o, h.part); }
   if (h.part === 'label') { snap(); drag = { mode: 'label', id: o.id, sx, sy, lo: { ...(o.lo || defaultLabelOffset(o)) }, moved: false }; return; }
-  drag = { mode: 'press', id: o.id, sx, sy, was: sel.includes(o.id), shift: e.shiftKey, moved: false };
+  drag = { mode: 'press', id: o.id, sx, sy, was: sel.includes(o.id), shift: e.shiftKey, moved: false, t0: performance.now() };
 }
 function moveRoots(ids) {
   const roots = new Map(); const seen = new Set();
@@ -1829,7 +1845,7 @@ function beginMove(d) {
 }
 function moveTo(d, sx, sy) {
   const w = toW(sx, sy);
-  for (const s of d.screens) { const o = obj(s.id); o.d.sx = s.sx + sx - d.sx; o.d.sy = s.sy + sy - d.sy; }
+  for (const s of d.screens) { const o = obj(s.id); o.d.sx = s.sx + sx - d.sx; o.d.sy = s.sy + sy - d.sy; if (o.d.peg != null && G[o.d.peg]) { const P0 = toS(G[o.d.peg]); o.d.pox = o.d.sx - P0.x; o.d.poy = o.d.sy - P0.y; } }
   for (const f0 of d.frees || []) { const o = obj(f0.id), dl = vsub(w, d.w0); if (f0.pts) o.d.pts = f0.pts.map(p => vadd(p, dl)); else { o.d.x = f0.x + dl.x; o.d.y = f0.y + dl.y; } }
   if (d.unit) { const o = obj(d.unit), O = G[o.p[0]]; o.d.u = Math.max(0.05, o.d.axis === 'y' ? w.y - O.y : w.x - O.x); dirty = true; recompute(); recordTraces(); requestDraw(); return; }
   let f;
@@ -1853,6 +1869,7 @@ function dragEnd(sx, sy, e) {
   if (d.mode === 'press') {
     const o = obj(d.id);
     if (o.t === 'button') { runButton(o); return; }
+    if (d.was && !d.shift && sel.length === 1 && performance.now() - (d.t0 || 0) < 600) { const list = hitAll(sx, sy); if (list.length > 1) { const i = list.indexOf(d.id); setSel([list[(i + 1) % list.length]]); toast('겹친 객체: ' + selName(obj(sel[0]))); return; } }
     if (d.was && d.shift) setSel(sel.filter(x => x !== d.id)); else if (!d.was) setSel([...sel, d.id]);
     return;
   }
@@ -1921,7 +1938,7 @@ function inlineText(o, sx, sy) {
   overlayInput(x, y, o ? textToEdit(o.d.text) : '', true, v => {
     if (v != null) v = textFromEdit(v);
     if (v == null) return; v = v.replace(/\s+$/, '');
-    if (!o) { if (!v) return; snap(); const t = add({ t: 'text', k: 'cap', d: { text: v, sx: x, sy: y, size: 15 } }); setSel([t.id]); }
+    if (!o) { if (!v) return; snap(); const t = add({ t: 'text', k: 'cap', d: { text: v, sx: x, sy: y, size: doc.prefs.capSize || 15, font: doc.prefs.capFont || 'sans' } }); setSel([t.id]); }
     else { snap(); if (!v) deleteObjs([o.id]); else o.d.text = v; refresh(); }
   }, { aria: '글상자 내용' });
 }
@@ -2060,7 +2077,7 @@ function markDesc(k) {
   if (k === 'center' || k === 'mirror') return obj(m) ? nm(m) : null;
   if (k === 'vector') return nm(m[0]) + ' → ' + nm(m[1]);
   if (k === 'angle') return m.pts ? '∠' + m.pts.map(nm).join('') : valueName(obj(m.val));
-  if (k === 'ratio') return m.segs ? 'm ' + nm(m.segs[0]) + ' / m ' + nm(m.segs[1]) : valueName(obj(m.val));
+  if (k === 'ratio') return m.pts ? '배율 ' + m.pts.map(nm).join('') : m.segs ? 'm ' + nm(m.segs[0]) + ' / m ' + nm(m.segs[1]) : valueName(obj(m.val));
   if (k === 'dist') return valueName(obj(m.val));
   return null;
 }
@@ -2068,7 +2085,7 @@ const markCmd = {
   center: () => { doc.marks.center = S().pts[0].id; toast('중심점 표시: ' + markDesc('center')); refresh(); },
   mirror: () => { doc.marks.mirror = S().str[0].id; toast('거울 표시: ' + markDesc('mirror')); refresh(); },
   angle: () => { const s = S(); doc.marks.angle = s.pts.length === 3 ? { pts: s.pts.map(o => o.id) } : s.os[0].t === 'amark' ? { pts: s.os[0].p.slice() } : { val: s.vals[0].id }; toast('각 표시: ' + markDesc('angle')); },
-  ratio: () => { const s = S(); doc.marks.ratio = s.segs.length === 2 ? { segs: s.segs.map(o => o.id) } : { val: s.vals[0].id }; toast('비율 표시: ' + markDesc('ratio')); },
+  ratio: () => { const s = S(); doc.marks.ratio = s.pts.length === 3 ? { pts: s.pts.map(o => o.id) } : s.segs.length === 2 ? { segs: s.segs.map(o => o.id) } : { val: s.vals[0].id }; toast('비율 표시: ' + markDesc('ratio')); },
   vector: () => { doc.marks.vector = S().pts.map(o => o.id); toast('벡터 표시: ' + markDesc('vector')); },
   dist: () => { doc.marks.dist = { val: S().vals[0].id }; toast('거리 표시: ' + markDesc('dist')); },
 };
@@ -2124,7 +2141,7 @@ function toggleTrace() { const s = S().os.filter(o => o.t === 'point' || isStrai
 
 /* ================= 애니메이션 ================= */
 const anims = new Map(); const moves = new Map(); let speedK = 1, animRAF = null, lastT = 0;
-function animatable(o) { return (o.t === 'point' && o.k === 'on') || (o.t === 'value' && o.k === 'param'); }
+function animatable(o) { return (o.t === 'point' && (o.k === 'on' || o.k === 'free')) || (o.t === 'value' && o.k === 'param'); }
 function startAnim(ids) { let n = 0; for (const id of ids) { const o = obj(id); if (o && animatable(o)) { anims.set(id, { dir: 1 }); n++; } } if (!n) return toast('경로 위의 점이나 매개변수를 선택하세요'); kick(); }
 function stopAnim(ids) { if (ids) ids.forEach(id => anims.delete(id)); else { anims.clear(); moves.clear(); } for (const o of doc.objs) if (o.t === 'button' && o.d.act === 'anim') o._running = o.p.some(id => anims.has(id)); updateMotion(); requestDraw(); scheduleSave(); }
 function kick() { updateMotion(); if (!animRAF) { lastT = performance.now(); animRAF = requestAnimationFrame(step); } }
@@ -2134,6 +2151,7 @@ function step(ts) {
   for (const [id, a] of anims) {
     const o = obj(id); if (!o) { anims.delete(id); continue; }
     if (o.t === 'value') { const d = o.d, span = (d.max - d.min) || 1; d.v += a.dir * span / 5 * dt * speedK * (a.speed || 1); if (d.v > d.max) { d.v = d.max; a.dir = -1; if (a.once) anims.delete(id); } if (d.v < d.min) { d.v = d.min; a.dir = 1; if (a.once) anims.delete(id); } continue; }
+    if (o.t === 'point' && o.k === 'free') { stepFreePoint(o, a, dt); continue; }
     const po = obj(o.p[0]), g = G[po.id]; if (!g) continue;
     const L = Math.max(1e-6, pathLength(po, g)); const dtp = a.dir * 3.2 * speedK * (a.speed || 1) * dt / L;
     let t = o.d.t + dtp;
@@ -2307,7 +2325,7 @@ function dilateDlg() {
     el('div', { class: 'row2' }, field('새 길이', num('dl-a', 1)), field('원래 길이', num('dl-b', 2))));
   openDlg('확대·축소', body, [{ label: '취소' }, { label: '확대·축소', primary: true, run: () => {
     const xf = { type: 'dil', c: doc.marks.center };
-    if (radioVal('dlm') === 'mark') { const r = doc.marks.ratio; if (r.segs) xf.rS = r.segs.slice(); else xf.rV = r.val; } else { const a = getNum('dl-a'), b = getNum('dl-b'); if (!b) { toast('원래 길이는 0이 될 수 없습니다'); return false; } xf.r = a / b; }
+    if (radioVal('dlm') === 'mark') { const r = doc.marks.ratio; if (r.pts) xf.rP = r.pts.slice(); else if (r.segs) xf.rS = r.segs.slice(); else xf.rV = r.val; } else { const a = getNum('dl-a'), b = getNum('dl-b'); if (!b) { toast('원래 길이는 0이 될 수 없습니다'); return false; } xf.r = a / b; }
     applyXf(xf);
   } }]);
 }
@@ -2316,12 +2334,13 @@ function reflectCmd() { if (doc.marks.mirror == null) return toast('먼저 거�
 function paramDialog(o) {
   const d = o ? o.d : { v: 1, min: 0, max: 10, step: 0.1, unit: 'none' };
   const body = el('div', { class: 'stack' },
-    el('div', { class: 'row2' }, field('이름', el('input', { id: 'pm-n', value: o ? o.label : 't' + ((doc.cnt.t || 0) + 1) })), field('값', num('pm-v', d.v))),
+    el('div', { class: 'row2' }, field('이름', el('input', { id: 'pm-n', value: o ? o.label : 't' + ((doc.cnt.t || 0) + 1) })), field('값 (수식을 넣으면 계산으로 바뀜)', el('input', { id: 'pm-v', value: d.v, inputmode: 'decimal' }))),
     field('단위', el('select', { id: 'pm-u' }, [['none', '없음'], ['dist', '거리 (cm)'], ['angle', '각 (' + (doc.prefs.deg ? '°' : 'rad') + ')']].map(([v, l]) => el('option', { value: v, selected: v === d.unit }, l)))),
     el('div', { class: 'row3' }, field('최솟값', num('pm-min', d.min)), field('최댓값', num('pm-max', d.max)), field('키보드 증감', num('pm-st', d.step))),
     el('p', { class: 'note' }, '선택한 뒤 + / − 키로 값을 바꾸고, 표시 ▸ 애니메이션으로 최솟값과 최댓값 사이를 오갑니다.'));
   openDlg(o ? '매개변수 편집' : '새 매개변수', body, [{ label: '취소' }, { label: o ? '확인' : '만들기', primary: true, run: () => {
-    const v = getNum('pm-v'); if (!isFinite(v)) { toast('값에 숫자를 입력하세요'); return false; }
+    const raw = $('#pm-v').value.trim(); const v = getNum('pm-v');
+    if (!isFinite(v) || !/^[-+0-9.eE]+$/.test(raw)) { if (!o) { toast('값에 숫자를 입력하세요'); return false; } let r2; try { r2 = userExprToStored(raw, false); } catch (e) { toast('숫자나 수식을 입력하세요: ' + e.message); return false; } if (r2.refs.includes(o.id)) { toast('자기 자신을 참조할 수 없습니다'); return false; } snap(); o.k = 'calc'; o.p = r2.refs; o.d = { expr: r2.stored, sx: o.d.sx, sy: o.d.sy }; moveToEnd(o.id); refresh(); toast('매개변수를 계산으로 바꿨습니다'); return; }
     const name = $('#pm-n').value.trim().replace(/\s+/g, '');
     if (!/^[A-Za-z_][A-Za-z_0-9]*$/.test(name)) { toast('이름은 영문자로 시작하는 영문·숫자 조합이어야 합니다 (예: t1, a)'); return false; }
     if (doc.objs.some(x => x !== o && (x.t === 'value' || x.t === 'fplot') && x.label === name)) { toast('같은 이름이 이미 있습니다'); return false; }
@@ -2393,7 +2412,7 @@ function prefsDlg() {
   const body = el('div', { class: 'stack' },
     el('div', { class: 'sub' }, '단위'),
     el('div', { class: 'row2' }, field('거리 단위', el('select', { id: 'pf-u' }, [['cm', '센티미터 (cm)'], ['in', '인치 (in)'], ['px', '픽셀 (px)']].map(([v, l]) => el('option', { value: v, selected: v === P.unit }, l)))),
-      field('각 단위', el('select', { id: 'pf-a' }, el('option', { value: 'deg', selected: P.deg }, '도 (°)'), el('option', { value: 'rad', selected: !P.deg }, '라디안')))),
+      field('각 단위', el('select', { id: 'pf-a' }, el('option', { value: 'deg', selected: P.deg && !P.directed }, '도 (°)'), el('option', { value: 'ddeg', selected: P.deg && P.directed }, '방향 있는 도 (−180°~180°)'), el('option', { value: 'rad', selected: !P.deg }, '라디안')))),
     el('div', { class: 'row3' }, field('기본 소수점', el('select', { id: 'pf-p' }, [0, 1, 2, 3, 4, 5].map(n => el('option', { value: n, selected: n === P.prec }, n + '자리')))), field('각 측정', precSel('pf-pa', P.precA)), field('거리·넓이', precSel('pf-pd', P.precD))),
     field('기타 값(비·계산 등)', precSel('pf-po', P.precO)),
     el('div', { class: 'sub' }, '레이블'),
@@ -2403,7 +2422,7 @@ function prefsDlg() {
     el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'pf-s', checked: P.snap }), '좌표계가 있을 때 점을 격자에 맞추기'),
     el('div', { class: 'row2' }, field('자취 기본 표본 수', num('pf-ln', P.locusN || 300, 10)), field('반복 최대 상 개수', num('pf-ic', P.iterCap || 30000, 1000))));
   openDlg('환경설정', body, [{ label: '취소' }, { label: '확인', primary: true, run: () => {
-    snap(); P.unit = $('#pf-u').value; P.deg = $('#pf-a').value === 'deg'; P.prec = +$('#pf-p').value;
+    snap(); P.unit = $('#pf-u').value; P.deg = $('#pf-a').value !== 'rad'; P.directed = $('#pf-a').value === 'ddeg'; P.prec = +$('#pf-p').value;
     const pv = id => $('#' + id).value === '' ? undefined : +$('#' + id).value; P.precA = pv('pf-pa'); P.precD = pv('pf-pd'); P.precO = pv('pf-po');
     P.autoLabel = $('#pf-l').checked; P.labelAll = $('#pf-la').checked; P.snap = $('#pf-s').checked;
     P.locusN = clamp(Math.round(getNum('pf-ln') || 300), 20, 5000); P.iterCap = clamp(Math.round(getNum('pf-ic') || 30000), 1000, 200000); refresh();
@@ -2476,6 +2495,7 @@ const MENUS = [
     { label: '그림으로 내보내기 (.png)', key: 'Ctrl+E', run: exportPNG },
     { label: '그림 가져오기…', run: importPictureDlg },
     { label: '웹 페이지로 내보내기 (.html)', run: exportWebPage },
+    ...(isStandalone() ? [{ label: '인쇄…', run: printSketch }] : []),
     sep,
     { label: '새 페이지', run: () => addPage() },
     { label: '페이지 복제', run: () => duplicatePage(book.cur) },
@@ -2489,8 +2509,11 @@ const MENUS = [
   { name: '편집', items: [
     { label: '실행 취소', key: 'Ctrl+Z', run: undo, en: () => undoStack.length > 0 },
     { label: '다시 실행', key: 'Ctrl+Y', run: redo, en: () => redoStack.length > 0 },
+    { label: '모두 실행 취소', run: undoAll, en: () => undoStack.length > 0 },
+    { label: '모두 다시 실행', run: redoAll, en: () => redoStack.length > 0 },
     sep,
     { label: '복사', key: 'Ctrl+C', run: copySel, en: () => sel.length > 0 },
+    { label: '그림으로 복사', run: copyAsPicture },
     { label: '붙여넣기', key: 'Ctrl+V', run: paste, en: () => !!clip },
     { label: '삭제', key: 'Del', run: deleteSel, en: () => sel.length > 0 },
     sep,
@@ -2516,6 +2539,7 @@ const MENUS = [
     { label: '맨 뒤로', run: () => layer(false), en: () => sel.length > 0 },
     { label: '속성…', run: () => propsDialog(), en: () => sel.length > 0 },
     { label: '환경설정…', run: prefsDlg },
+    { label: '색·글자 환경설정…', run: colorPrefsDlg },
   ] },
   { name: '표시', items: [
     { label: '선 굵기', sub: () => [[1, '가늘게'], [2, '보통'], [3, '굵게']].map(([v, l]) => ({ label: l, run: () => setProp(o => o.w = v), en: () => sel.length > 0 })) },
@@ -2525,6 +2549,8 @@ const MENUS = [
     { label: '텍스트 팔레트 보이기/숨기기', run: () => toggleTextPalette(), check: () => paletteOn },
     sep,
     { label: '레이블 보이기/숨기기', key: 'Ctrl+K', run: toggleLabels, en: () => sel.length > 0 },
+    { label: '레이블 붙이기…', run: labelManyDlg, en: () => sel.length > 0 },
+    { label: '다음 레이블 다시 설정', run: resetLabels },
     { label: '객체 숨기기', key: 'Ctrl+H', run: hideSel, en: () => sel.length > 0 },
     { label: '숨긴 객체 모두 보이기', run: showAllHidden },
     sep,
@@ -2567,7 +2593,7 @@ const MENUS = [
     { label: '중심점 표시', run: markCmd.center, en: () => S().n === 1 && S().pts.length === 1, hint: () => markDesc('center') },
     { label: '거울 표시', run: markCmd.mirror, en: () => S().n === 1 && S().str.length === 1, hint: () => markDesc('mirror') },
     { label: '각 표시', run: markCmd.angle, en: () => { const s = S(); return (s.n === 3 && s.pts.length === 3) || (s.n === 1 && (s.vals.length === 1 || s.os[0].t === 'amark')); }, hint: () => markDesc('angle') },
-    { label: '비율 표시', run: markCmd.ratio, en: () => { const s = S(); return (s.n === 2 && s.segs.length === 2) || (s.n === 1 && s.vals.length === 1); }, hint: () => markDesc('ratio') },
+    { label: '비율·배율 표시', run: markCmd.ratio, en: () => { const s = S(); return (s.n === 3 && s.pts.length === 3) || (s.n === 2 && s.segs.length === 2) || (s.n === 1 && s.vals.length === 1); }, hint: () => markDesc('ratio') },
     { label: '벡터 표시', run: markCmd.vector, en: () => { const s = S(); return s.n === 2 && s.pts.length === 2; }, hint: () => markDesc('vector') },
     { label: '거리 표시', run: markCmd.dist, en: () => { const s = S(); return s.n === 1 && s.vals.length === 1; }, hint: () => markDesc('dist') },
     sep,
@@ -2624,6 +2650,7 @@ const MENUS = [
       sep,
       ...[['line', '선 격자'], ['dots', '점 격자'], ['none', '격자 숨기기']].map(([v, l]) => ({ label: l, en: () => !!doc.coordId, check: () => { const c = obj(doc.coordId); return c && (v === 'none' ? c.d.grid === false : c.d.grid !== false && (!!c.d.dots === (v === 'dots'))); }, run: () => { snap(); const c = obj(doc.coordId); c.d.grid = v !== 'none'; c.d.dots = v === 'dots'; refresh(); } })),
       sep,
+      { label: '삼각 축 (x축을 π 단위로)', en: () => !!doc.coordId, check: () => { const c = obj(doc.coordId); return c && !!c.d.trig; }, run: () => { snap(); const c = obj(doc.coordId); c.d.trig = !c.d.trig; refresh(); } },
       { label: '축 보이기/숨기기', en: () => !!doc.coordId, check: () => { const c = obj(doc.coordId); return c && c.d.axes !== false; }, run: () => { snap(); const c = obj(doc.coordId); c.d.axes = c.d.axes === false; refresh(); } },
     ] },
     { label: '좌표계 보이기/숨기기', run: () => { if (!doc.coordId) return; snap(); const c = obj(doc.coordId); c.hidden = !c.hidden; refresh(); }, en: () => !!doc.coordId },
@@ -2631,6 +2658,7 @@ const MENUS = [
     sep,
     { label: '축 위에 값 그리기', run: plotValueOnAxis, en: () => { const s = S(); return s.n >= 1 && s.vals.length === s.n && s.vals.every(v => isFinite((G[v.id] || {}).v)); } },
     { label: '(x, y)로 그리기', run: () => { const v = S().vals; snap(); const pol = G[ensureCoord()].form === 'polar'; setSel([mkPlot({ v: v[0].id }, { v: v[1].id }, { polar: pol })]); }, en: () => { const s = S(); return s.n === 2 && s.vals.length === 2; } },
+    { label: '경로 위에 값 그리기', run: plotOnPathCmd, en: () => { const s = S(); return s.n === 2 && s.vals.length === 1 && s.os.some(isPath); } },
     { label: '점 그리기…', run: plotDlg },
     { label: '표 데이터 그리기', run: () => plotTableCmd && plotTableCmd(), en: () => typeof plotTableCmd === 'function' && S().n === 1 && S().os[0].t === 'table' },
     sep,
@@ -3033,7 +3061,8 @@ function instantiateTool(tool, matched) {
     if (o.t === 'coord') continue;
     if (isScreenObj(o)) { const pos = nextScreenPos(); o.d.sx = pos.sx; o.d.sy = pos.sy; }
     const shown = tool.shown.includes(old); o.hidden = !shown || !!c.hidden;
-    add(o); if (o.label || o.t === 'point') giveLabel(o, shown && (o.t === 'point' ? doc.prefs.autoLabel && c.showLabel !== false : !!c.showLabel));
+    const keep = tool.keepLabels && o.label && !doc.objs.some(x => x.label === o.label); const lab0 = o.label;
+    add(o); if (o.label || o.t === 'point') giveLabel(o, shown && (o.t === 'point' ? (doc.prefs.autoLabel || keep) && c.showLabel !== false : !!c.showLabel)); if (keep) o.label = lab0;
     map.set(old, o.id); if (shown) out.push(o.id);
   }
   return out;
@@ -3043,18 +3072,21 @@ function toolLib() { try { return JSON.parse(localStorage.getItem('jakdo-toolfol
 function saveToolLib(a) { try { localStorage.setItem('jakdo-toolfolder', JSON.stringify(a)); return true; } catch (e) { toast('브라우저 저장소를 쓸 수 없습니다'); return false; } }
 function createToolDlg() {
   const body = el('div', { class: 'stack' }, field('도구 이름', el('input', { id: 'tl-n', value: '새 도구 ' + ((doc.tools || []).length + 1) })),
+    field('도구 설명 (스크립트 보기에 표시)', el('textarea', { id: 'tl-c', rows: 2 })),
     el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'tl-lib' }), '도구 폴더(이 브라우저)에도 저장해 다른 페이지·문서에서 쓰기'),
+    el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'tl-am' }), '같은 레이블의 객체가 있으면 주어진 것에 자동 연결'),
+    el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'tl-kl' }), '결과에 원래 레이블 쓰기 (겹치지 않을 때)'),
     el('p', { class: 'note' }, '선택한 객체 가운데 다른 선택 객체에 의존하지 않는 것이 주어진 것(입력), 나머지가 결과가 됩니다. 선택하지 않은 중간 객체는 도구를 쓸 때 숨겨진 채로 만들어집니다. 주어진 것을 고른 순서대로 클릭하게 됩니다.'));
   openDlg('사용자 도구 만들기', body, [{ label: '취소' }, { label: '만들기', primary: true, run: () => {
-    const t = buildTool($('#tl-n').value.trim() || '새 도구'); if (t.err) { toast(t.err); return false; }
+    const t = buildTool($('#tl-n').value.trim() || '새 도구'); if (t.err) { toast(t.err); return false; } t.comment = $('#tl-c').value.trim(); t.automatch = $('#tl-am').checked; t.keepLabels = $('#tl-kl').checked;
     snap(); doc.tools = doc.tools || []; doc.tools.push(t);
     if ($('#tl-lib').checked) { const a = toolLib().filter(x => x.name !== t.name); a.push(t); saveToolLib(a); }
     activateTool(t); toast('도구 “' + t.name + '”을(를) 만들었습니다. 주어진 것 ' + t.givens.filter(g => !g.auto).length + '개를 차례로 클릭하세요');
   } }]);
 }
 let ctool = null, ctoolMatched = [];
-function activateTool(t) { setTool('custom'); ctool = t; ctoolMatched = []; ctoolHint(); }
-function nextGiven() { while (ctool && ctoolMatched.length < ctool.givens.length && ctool.givens[ctoolMatched.length].auto) ctoolMatched.push(ensureCoord()); return ctool && ctool.givens[ctoolMatched.length]; }
+function activateTool(t) { const m = toolMatchesSelection(t); setTool('custom'); ctool = t; ctoolMatched = []; if (m) { snap(); const out = instantiateTool(t, m); setSel(out); toast('선택한 객체에 “' + t.name + '”을(를) 명령처럼 적용했습니다'); } ctoolHint(); }
+function nextGiven() { autoMatchNext(); while (ctool && ctoolMatched.length < ctool.givens.length && ctool.givens[ctoolMatched.length].auto) ctoolMatched.push(ensureCoord()); return ctool && ctool.givens[ctoolMatched.length]; }
 function ctoolHint() {
   if (!ctool) { $('#status-hint').textContent = '도구상자의 사용자 도구 단추에서 도구를 고르세요.'; return; }
   const g = nextGiven(); const manual = ctool.givens.filter(x => !x.auto);
@@ -3075,7 +3107,7 @@ function customToolDown(sx, sy) {
 }
 function scriptView(t) {
   t = t || ctool; if (!t) return toast('도구를 먼저 고르세요');
-  const body = el('div', { class: 'stack script' },
+  const body = el('div', { class: 'stack script' }, t.comment ? el('p', { class: 'note' }, t.comment) : null,
     el('div', { class: 'sub' }, '주어진 것'), el('ol', {}, t.givens.map(g => el('li', {}, KIND_KO[g.kind] + ' ' + g.label + (g.auto ? ' (자동 연결)' : '')))),
     el('div', { class: 'sub' }, '단계'), el('ol', {}, t.steps.map(s => el('li', {}, s))));
   openDlg('스크립트 보기 — ' + t.name, body, [{ label: '닫기', primary: true }]);
@@ -3084,7 +3116,7 @@ function manageToolsDlg() {
   const box = el('div', { class: 'stack' });
   const render = () => {
     box.innerHTML = '';
-    const sec = (title, list, del, extra) => { box.append(el('div', { class: 'sub' }, title)); if (!list.length) box.append(el('p', { class: 'note' }, '없음')); list.forEach((t, i) => box.append(el('div', { class: 'arch-row' }, el('div', {}, el('b', {}, t.name), el('small', {}, '주어진 것 ' + t.givens.filter(g => !g.auto).length + '개 · 단계 ' + t.steps.length + '개')), el('button', { class: 'btn', onclick: () => { activateTool(t); } }, '쓰기'), extra(t, i), el('button', { class: 'btn ghost', onclick: () => { del(i); render(); } }, '삭제')))); };
+    const sec = (title, list, del, extra) => { box.append(el('div', { class: 'sub' }, title)); if (!list.length) box.append(el('p', { class: 'note' }, '없음')); list.forEach((t, i) => box.append(el('div', { class: 'arch-row' }, el('div', {}, el('input', { value: t.name, 'aria-label': '도구 이름', onchange: e => { t.name = e.target.value.trim() || t.name; if (list !== doc.tools) saveToolLib(list); scheduleSave(); } }), el('small', {}, '주어진 것 ' + t.givens.filter(g => !g.auto).length + '개 · 단계 ' + t.steps.length + '개')), el('button', { class: 'btn', onclick: () => { activateTool(t); } }, '쓰기'), extra(t, i), el('button', { class: 'btn ghost', onclick: () => { del(i); render(); } }, '삭제')))); };
     sec('이 페이지의 도구', doc.tools || [], i => { snap(); doc.tools.splice(i, 1); }, t => el('button', { class: 'btn ghost', onclick: () => { const a = toolLib().filter(x => x.name !== t.name); a.push(t); saveToolLib(a); toast('도구 폴더에 저장했습니다'); } }, '폴더에 저장'));
     sec('도구 폴더 (이 브라우저)', toolLib(), i => { const a = toolLib(); a.splice(i, 1); saveToolLib(a); }, t => el('button', { class: 'btn ghost', onclick: () => scriptView(t) }, '스크립트'));
   };
@@ -3107,6 +3139,11 @@ function customToolMenu(btn) {
 /* ================= 분리 / 병합 ================= */
 function splitMergeInfo() {
   const s = S();
+  const tx = s.os.find(o => o.t === 'text'), pic = s.os.find(o => o.t === 'picture');
+  if (s.n === 1 && tx && tx.d.peg != null) return { label: '글상자를 점에서 분리', run: () => unpegText(tx) };
+  if (s.n === 2 && tx && s.pts.length === 1) return { label: '글상자를 점 ' + nm(s.pts[0].id) + '에 병합', run: () => pegText(tx, s.pts[0]) };
+  if (s.n === 2 && pic && pic.k === 'free' && s.pts.length === 1) return { label: '그림을 점 ' + nm(s.pts[0].id) + '에 병합', run: () => pegPicture(pic, s.pts[0]) };
+  if (s.n === 1 && pic && pic.k === 'pts' && pic.p.length === 1) return { label: '그림을 점에서 분리', run: () => { snap(); const g = G[pic.id]; pic.k = 'free'; pic.p = []; pic.d.x = g.TL.x; pic.d.y = g.TL.y; refresh(); } };
   if (s.n === 1 && s.pts.length === 1 && ['on', 'int', 'mid', 'plot', 'term', 'cxf', 'xf', 'unitlen'].includes(s.pts[0].k)) return { label: s.pts[0].k === 'xf' ? '점을 정의에서 분리' : '점을 부모에서 분리', run: () => splitPoint(s.pts[0]) };
   if (s.n === 2 && s.pts.length === 2 && s.pts[0].k === 'free' && !descendants([s.pts[0].id]).has(s.pts[1].id)) return { label: '점 ' + nm(s.pts[0].id) + '을(를) ' + nm(s.pts[1].id) + '에 병합', run: () => mergePoints(s.pts[0], s.pts[1]) };
   if (s.n === 2 && s.pts.length === 1 && s.pts[0].k === 'free' && s.os.some(isPath) && !descendants([s.pts[0].id]).has(s.os.find(isPath).id)) return { label: '점을 경로에 병합', run: () => mergeOnPath(s.pts[0], s.os.find(isPath)) };
@@ -3185,7 +3222,7 @@ function importPicture(file) {
   }; r.readAsDataURL(file);
 }
 function importPictureDlg() { const inp = el('input', { type: 'file', accept: 'image/*' }); inp.onchange = () => importPicture(inp.files[0]); inp.click(); }
-document.addEventListener('paste', e => { if (e.target.closest('input,textarea')) return; const it = [...(e.clipboardData ? e.clipboardData.items : [])].find(i => i.type.startsWith('image/')); if (it) { e.preventDefault(); importPicture(it.getAsFile()); } });
+document.addEventListener('paste', e => { if (e.target.closest('input,textarea')) return; const it = [...(e.clipboardData ? e.clipboardData.items : [])].find(i => i.type.startsWith('image/')); if (!it) return; e.preventDefault(); const pic = S().n === 1 && S().os[0].t === 'picture' ? S().os[0] : null; if (pic) { const r = new FileReader(); r.onload = () => { snap(); pic.d.src = r.result; refresh(); toast('그림을 바꿔 넣었습니다'); }; r.readAsDataURL(it.getAsFile()); } else importPicture(it.getAsFile()); });
 function cropPictureCmd() { const s = S(); const pic = s.os.find(o => o.t === 'picture'), pg = s.os.find(o => o.t === 'polygon'); snap(); pic.d.crop = pg.id; refresh(); toast('그림을 다각형 모양으로 잘랐습니다'); }
 
 'use strict';
@@ -3221,6 +3258,8 @@ function parseRich(s) {
   while (i < s.length) {
     const c = s[i];
     if (c === '^' || c === '_') { i++; out.push({ k: c === '^' ? 'sup' : 'sub', c: group() }); continue; }
+    if (s.startsWith('\\overline', i)) { i += 9; out.push({ k: 'over', c: group() }); continue; }
+    if (s.startsWith('\\arc', i)) { i += 4; out.push({ k: 'arcm', c: group() }); continue; }
     if (s.startsWith('\\frac', i)) { i += 5; const a = group(), b = group(); out.push({ k: 'frac', a, b }); continue; }
     if (c === '√' && s[i + 1] === '{') { i++; out.push({ k: 'sqrt', c: group() }); continue; }
     if (s.startsWith('{#', i)) { const j = s.indexOf('}', i); const id = +s.slice(i + 2, j); i = j + 1; out.push({ k: 'hot', id }); continue; }
@@ -3238,6 +3277,7 @@ function layoutRich(nodes, size, font) {
     let L;
     if (n.k === 't' || n.k === 'hot') { const str = n.k === 'hot' ? hotText(n.id) : n.s; ctx.font = F(size); const ww = ctx.measureText(str).width; L = { w: ww, asc: size * 0.8, desc: size * 0.25, draw: (x, y) => { ctx.font = F(size); ctx.fillText(str, x, y); } }; }
     else if (n.k === 'sup' || n.k === 'sub') { const c = layoutRich(n.c, size * 0.7, font); const dy = n.k === 'sup' ? -size * 0.4 : size * 0.25; L = { w: c.w + 1, asc: Math.max(size * 0.8, c.asc - dy), desc: Math.max(size * 0.25, c.desc + dy), draw: (x, y) => c.draw(x, y + dy) }; }
+    else if (n.k === 'over' || n.k === 'arcm') { const c = layoutRich(n.c, size, font); const arc = n.k === 'arcm'; L = { w: c.w, asc: c.asc + 4, desc: c.desc, draw: (x, y) => { c.draw(x, y); const top = y - c.asc - 2; if (arc) { ctx.save(); ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 1.1; ctx.beginPath(); ctx.ellipse(x + c.w / 2, top + 2, c.w / 2, 3.5, 0, Math.PI, TAU); ctx.stroke(); ctx.restore(); } else ctx.fillRect(x, top, c.w, 1.1); } }; }
     else if (n.k === 'frac') { const a = layoutRich(n.a, size * 0.85, font), b = layoutRich(n.b, size * 0.85, font); const fw = Math.max(a.w, b.w) + 4, mid = size * 0.3; L = { w: fw + 2, asc: mid + a.asc + a.desc + 2, desc: Math.max(0, b.asc + b.desc + 2 - mid), draw: (x, y) => { a.draw(x + 1 + (fw - a.w) / 2, y - mid - 2 - a.desc); b.draw(x + 1 + (fw - b.w) / 2, y - mid + 2 + b.asc); ctx.fillRect(x + 1, y - mid - 0.6, fw, 1.2); } }; }
     else if (n.k === 'sqrt') { const c = layoutRich(n.c, size, font); const rw = size * 0.55; L = { w: c.w + rw + 3, asc: c.asc + 3, desc: c.desc, draw: (x, y) => { const top = y - c.asc - 2; ctx.save(); ctx.lineWidth = Math.max(1, size / 14); ctx.strokeStyle = ctx.fillStyle; ctx.beginPath(); ctx.moveTo(x, y - size * 0.3); ctx.lineTo(x + rw * 0.35, y - size * 0.4); ctx.lineTo(x + rw * 0.6, y + c.desc * 0.6); ctx.lineTo(x + rw, top); ctx.lineTo(x + rw + c.w + 2, top); ctx.stroke(); ctx.restore(); c.draw(x + rw + 1, y); } }; }
     if (!L) continue; const x0 = w; items.push([x0, L]); w += L.w; asc = Math.max(asc, L.asc); desc = Math.max(desc, L.desc);
@@ -3254,12 +3294,12 @@ function drawRichText(o, selected, hover) {
   const Ls = lines.map(l => layoutRich(parseRich(l), size, font));
   const w = Math.max(10, ...Ls.map(L => L.w)) + pad * 2; let h = pad * 2; const ys = [];
   for (const L of Ls) { h += L.asc; ys.push(h); h += L.desc + size * 0.25; }
-  const x = o.d.sx, y = o.d.sy; o._bb = { x, y, w, h };
+  textPos(o); const x = o.d.sx, y = o.d.sy; o._bb = { x, y, w, h };
   if (o.hidden) ctx.globalAlpha = 0.35;
   ctx.globalAlpha *= 0.82; ctx.fillStyle = THEME.paper; ctx.fillRect(x, y, w, h); ctx.globalAlpha = o.hidden ? 0.35 : 1;
   if (selected || hover) { ctx.strokeStyle = selected ? THEME.sel : THEME.hover; ctx.lineWidth = selected ? 2 : 1; ctx.setLineDash([3, 3]); ctx.strokeRect(x - 2, y - 2, w + 4, h + 4); ctx.setLineDash([]); }
   ctx.fillStyle = colOf(o);
-  Ls.forEach((L, i) => { L.draw(x + pad, y + ys[i]); if (o.d.underline) ctx.fillRect(x + pad, y + ys[i] + 2, L.w, 1); });
+  Ls.forEach((L, i) => { const ax = o.d.align === 'center' ? (w - pad * 2 - L.w) / 2 : o.d.align === 'right' ? (w - pad * 2 - L.w) : 0; L.draw(x + pad + ax, y + ys[i]); if (o.d.underline) ctx.fillRect(x + pad, y + ys[i] + 2, L.w, 1); });
   ctx.restore();
 }
 function textToEdit(s) { return (s || '').replace(/\{#(\d+)\}/g, (_, id) => { const o = obj(+id); return o ? '{' + (o.label || '?') + '}' : '{?}'; }); }
@@ -3274,7 +3314,7 @@ function toggleTextPalette(force) {
   const targets = () => S().os.filter(o => o.t === 'text' || o.t === 'value' || o.t === 'button');
   const apply = f => { const t = targets(); if (!t.length) return toast('글상자나 값을 선택하세요'); snap(); t.forEach(f); refresh(); };
   const ins = s => { const a = document.activeElement; if (a && a.classList && a.classList.contains('inline-edit')) { insertAt(a, s); return; } toast('글상자를 편집하는 중에 누르면 커서 위치에 들어갑니다'); };
-  const sym = ['π', 'θ', '°', '±', '×', '÷', '≤', '≥', '≠', '≈', '∠', '△', '⊥', '∥', '≅', '∽', '∞', '√{ }', 'x^{2}', 'a_{n}', '\\frac{a}{b}'];
+  const sym = ['\\overline{AB}', '\\arc{AB}', 'π', 'θ', '°', '±', '×', '÷', '≤', '≥', '≠', '≈', '∠', '△', '⊥', '∥', '≅', '∽', '∞', '√{ }', 'x^{2}', 'a_{n}', '\\frac{a}{b}'];
   pal = el('div', { id: 'txtpal', role: 'toolbar', 'aria-label': '텍스트 팔레트' },
     el('select', { 'aria-label': '글꼴', onchange: e => apply(o => o.d.font = e.target.value) }, el('option', { value: 'sans' }, '고딕'), el('option', { value: 'serif' }, '명조·수식'), el('option', { value: 'mono' }, '고정폭')),
     el('select', { 'aria-label': '크기', onchange: e => apply(o => o.d.size = +e.target.value) }, [11, 13, 15, 18, 22, 28, 36, 48].map(n => el('option', { value: n, selected: n === 15 }, n + 'px'))),
@@ -3284,7 +3324,9 @@ function toggleTextPalette(force) {
     el('span', { class: 'tp-sep' }),
     ...Object.keys(PALETTE).map(k => el('button', { class: 'sw sm', title: PAL_KO[k], 'aria-label': PAL_KO[k], style: `--c:${col(k)}`, onclick: () => apply(o => { o.color = k; delete o.pc; }) })),
     el('span', { class: 'tp-sep' }),
-    ...sym.map(sy => el('button', { class: 'tp-s', title: '편집 중인 글상자에 넣기', onmousedown: e => e.preventDefault(), onclick: () => ins(sy.replace('{ }', '{}')) }, sy.replace('\\frac{a}{b}', 'a/b').replace('x^{2}', 'x²').replace('a_{n}', 'aₙ').replace('√{ }', '√'))),
+    el('button', { class: 'tp-b', title: '왼쪽 정렬', onclick: () => apply(o => o.d.align = 'left') }, '⫷'), el('button', { class: 'tp-b', title: '가운데 정렬', onclick: () => apply(o => o.d.align = 'center') }, '≡'), el('button', { class: 'tp-b', title: '오른쪽 정렬', onclick: () => apply(o => o.d.align = 'right') }, '⫸'),
+    el('span', { class: 'tp-sep' }),
+    ...sym.map(sy => el('button', { class: 'tp-s', title: '편집 중인 글상자에 넣기', onmousedown: e => e.preventDefault(), onclick: () => ins(sy.replace('{ }', '{}')) }, sy.replace('\\overline{AB}', 'AB̄').replace('\\arc{AB}', '⌒AB').replace('\\frac{a}{b}', 'a/b').replace('x^{2}', 'x²').replace('a_{n}', 'aₙ').replace('√{ }', '√'))),
     el('button', { class: 'tp-x', 'aria-label': '팔레트 닫기', onclick: () => toggleTextPalette(false) }, '×'));
   $('#stage').append(pal);
 }
@@ -3337,7 +3379,9 @@ function propsExtra(list, one, body) {
     body.append(el('div', { class: 'row2' }, field('표본 수', num('px-n', one.d.n || (obj(one.p[one.p.length === 3 ? 2 : 1]) && obj(one.p[one.p.length === 3 ? 2 : 1]).t === 'point' ? 300 : 70), 1)), el('label', { class: 'chk', style: 'align-self:end' }, el('input', { type: 'checkbox', id: 'px-dc', checked: !!one.d.disc }), '점으로만 (불연속)')));
     fns.push(() => { one.d.n = clamp(Math.round(getNum('px-n') || 100), 3, 5000); one.d.disc = $('#px-dc').checked; });
   }
+  if (one && one.t === 'amark') { body.append(field('각 표시 크기 (px)', num('px-ar', one.d.r || 20, 1))); fns.push(() => { one.d.r = clamp(getNum('px-ar') || 20, 8, 80); }); }
   if (one && one.t === 'fplot') {
+    body.append(el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'px-fd', checked: !!one.d.disc }), '점으로만 (불연속)')); fns.push(() => { one.d.disc = $('#px-fd').checked; });
     const isP = one.k === 'param';
     body.append(el('div', { class: 'row3' }, field(isP ? 't 최솟값' : '정의역 최솟값', el('input', { id: 'px-a', type: 'number', value: isP ? one.d.tmin : (one.d.xmin ?? '') })), field(isP ? 't 최댓값' : '정의역 최댓값', el('input', { id: 'px-b', type: 'number', value: isP ? one.d.tmax : (one.d.xmax ?? '') })), field('표본 수', num('px-n', one.d.n || 400, 1))));
     fns.push(() => { const a = $('#px-a').value, b = $('#px-b').value; if (isP) { one.d.tmin = +a || 0; one.d.tmax = b === '' ? 1 : +b; } else { one.d.xmin = a === '' ? null : +a; one.d.xmax = b === '' ? null : +b; } one.d.n = clamp(Math.round(getNum('px-n') || 400), 10, 5000); });
@@ -3399,6 +3443,148 @@ const MANUAL_MAP = [
   ['웹에서 다르게 처리한 것', '인쇄·인쇄 미리보기·페이지 설정 → PNG·웹 페이지로 내보내기 / 도구 폴더 → 이 브라우저의 도구 폴더 / JavaSketchpad → 웹 페이지 내보내기 / 창 메뉴·LessonLink·명령줄 옵션은 웹 앱에 해당 없음'],
 ];
 function manualMapDlg() { openDlg('매뉴얼 기능 대응표', el('div', { class: 'stack help' }, el('table', {}, el('tbody', {}, MANUAL_MAP.map(([k, v]) => el('tr', {}, el('th', { style: 'font-family:var(--f-ui)' }, k), el('td', {}, v)))))), [{ label: '닫기', primary: true }]); }
+
+'use strict';
+/* ================= 모두 실행 취소 / 다시 실행 ================= */
+function undoAll() { if (!undoStack.length) return toast('되돌릴 작업이 없습니다'); while (undoStack.length) { redoStack.push(serialize()); const s = undoStack.pop(); if (!undoStack.length) restore(s); } toast('처음 상태로 되돌렸습니다'); scheduleSave(); }
+function redoAll() { if (!redoStack.length) return toast('다시 실행할 작업이 없습니다'); let last = null; while (redoStack.length) { undoStack.push(serialize()); last = redoStack.pop(); } restore(last); toast('모두 다시 실행했습니다'); scheduleSave(); }
+
+/* ================= Shift: 15° 단위로 고정 ================= */
+let shiftDown = false;
+document.addEventListener('keydown', e => { if (e.key === 'Shift') shiftDown = true; });
+document.addEventListener('keyup', e => { if (e.key === 'Shift') shiftDown = false; });
+function constrainCand(c, fromId) {
+  if (!shiftDown || !c || c.kind !== 'free' || fromId == null || !G[fromId]) return c;
+  const A = G[fromId], d = vsub(c.w, A), L = vlen(d); if (L < 1e-9) return c;
+  const step = Math.PI / 12, th = Math.round(vang(d) / step) * step; const w = vadd(A, vpol(L, th));
+  return { kind: 'free', w, s: toS(w) };
+}
+
+/* ================= 독립점(자유점) 애니메이션 ================= */
+function stepFreePoint(o, a, dt) {
+  if (a.vx == null) { const th = Math.random() * TAU; a.vx = Math.cos(th); a.vy = Math.sin(th); }
+  const turn = (Math.random() - 0.5) * 2.2 * dt; const c = Math.cos(turn), s = Math.sin(turn); const vx = a.vx * c - a.vy * s, vy = a.vx * s + a.vy * c; a.vx = vx; a.vy = vy;
+  const sp = 3 * speedK * (a.speed || 1) * dt; o.d.x += a.vx * sp; o.d.y += a.vy * sp;
+  const b = viewBoundsFn(), m = 0.6;
+  if (o.d.x < b.x0 + m || o.d.x > b.x1 - m) { a.vx *= -1; o.d.x = clamp(o.d.x, b.x0 + m, b.x1 - m); }
+  if (o.d.y < b.y0 + m || o.d.y > b.y1 - m) { a.vy *= -1; o.d.y = clamp(o.d.y, b.y0 + m, b.y1 - m); }
+}
+
+/* ================= 레이블 여러 개 붙이기 / 다음 레이블 다시 설정 ================= */
+function labelManyDlg() {
+  const os = S().os.filter(o => o.t !== 'text' && o.t !== 'button' && o.t !== 'table'); if (!os.length) return toast('레이블을 붙일 객체를 선택하세요');
+  const one = os.length === 1;
+  const body = el('div', { class: 'stack' }, el('div', { class: 'row2' }, field(one ? '레이블' : '레이블 앞부분', el('input', { id: 'lm-b', value: one ? (os[0].label || '') : 'P' })), one ? null : field('시작 번호', num('lm-s', 1, 1))),
+    el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'lm-v', checked: true }), '레이블 보이기'),
+    one ? null : el('p', { class: 'note' }, '선택한 순서대로 P₁, P₂, P₃ … 처럼 붙습니다.'));
+  openDlg(one ? '레이블 붙이기' : '여러 객체에 레이블 붙이기', body, [{ label: '취소' }, { label: '적용', primary: true, run: () => {
+    const base = $('#lm-b').value.trim(); if (!base) { toast('레이블을 입력하세요'); return false; }
+    snap(); const st = one ? 0 : Math.max(0, Math.floor(getNum('lm-s') || 1)); os.forEach((o, i) => { o.label = one ? base : base + (st + i); if (o.t !== 'value') o.showLabel = $('#lm-v').checked; }); refresh();
+  } }]);
+}
+function resetLabels() { snap(); doc.cnt = {}; toast('다음 레이블을 A, j, c₁ … 부터 다시 붙입니다'); }
+
+/* ================= 텍스트·그림을 점에 병합 ================= */
+function pegText(t, p) { snap(); const P0 = toS(G[p.id]); t.d.peg = p.id; t.d.pox = t.d.sx - P0.x; t.d.poy = t.d.sy - P0.y; refresh(); toast('글상자를 점 ' + nm(p.id) + '에 붙였습니다. 점을 끌면 함께 움직입니다'); }
+function unpegText(t) { snap(); delete t.d.peg; refresh(); toast('글상자를 점에서 분리했습니다'); }
+function pegPicture(pic, p) { snap(); pic.k = 'pts'; pic.p = [p.id]; moveToEnd(pic.id); refresh(); toast('그림을 점 ' + nm(p.id) + '에 붙였습니다'); }
+function textPos(o) { if (o.d.peg != null && G[o.d.peg]) { const P0 = toS(G[o.d.peg]); o.d.sx = P0.x + (o.d.pox ?? 8); o.d.sy = P0.y + (o.d.poy ?? -30); } }
+
+/* ================= 경로 위에 값 그리기 ================= */
+function plotOnPathCmd() { const s = S(); const v = s.vals[0], path = s.os.find(isPath); snap(); const o = add({ t: 'point', k: 'onv', p: [path.id, v.id] }); giveLabel(o, doc.prefs.autoLabel); setSel([o.id]); }
+
+/* ================= 인쇄 (독립 실행 페이지에서만) ================= */
+function isStandalone() { try { return window.top === window.self; } catch (e) { return false; } }
+function printSketch() {
+  const s0 = sel; sel = []; const h0 = hoverId; hoverId = null; draw();
+  let area = $('#print-area'); if (!area) { area = el('div', { id: 'print-area' }); document.body.append(area); }
+  area.innerHTML = ''; area.append(el('h1', {}, curPage() ? curPage().name : '작도'), el('img', { src: cv.toDataURL('image/png'), alt: '작도 그림' }));
+  sel = s0; hoverId = h0; requestDraw(); setTimeout(() => window.print(), 50);
+}
+
+/* ================= 그림으로 복사 / 파일 끌어다 놓기 ================= */
+function copyAsPicture() {
+  const s0 = sel; sel = []; draw();
+  cv.toBlob(async b => { sel = s0; requestDraw(); try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]); toast('그림을 클립보드에 복사했습니다'); } catch (e) { toast('이 화면에서는 그림 복사가 막혀 있습니다. 그림으로 내보내기를 쓰세요'); } }, 'image/png');
+}
+function readDropped(file) {
+  if (/^image\//.test(file.type)) return importPicture(file);
+  const r = new FileReader();
+  r.onload = () => {
+    const txt = r.result;
+    try {
+      if (/\.json$/i.test(file.name)) { const n = appendBook(parseBook(txt)); return toast('‘' + file.name + '’에서 페이지 ' + n + '개를 열었습니다'); }
+      if (/\.html?$/i.test(file.name)) {
+        const m = txt.match(/<script type="application\/json" id="jakdo-embed">([\s\S]*?)<\/script>/); if (m) { const n = appendBook(parseBook(m[1])); return toast('웹 페이지에서 페이지 ' + n + '개를 열었습니다'); }
+        if (typeof importJSP === 'function' && /PARAM\s+NAME\s*=\s*"?Construction/i.test(txt)) return importJSP(txt, file.name);
+      }
+      if (/\.gsp$/i.test(file.name) && typeof importGSPFile === 'function') return importGSPFile(file);
+      toast('이 파일 형식은 열 수 없습니다');
+    } catch (e) { toast('파일을 열 수 없습니다: ' + e.message); }
+  };
+  if (/\.gsp$/i.test(file.name) && typeof importGSPFile === 'function') return importGSPFile(file);
+  r.readAsText(file);
+}
+const stageEl = document.getElementById('stage');
+stageEl.addEventListener('dragover', e => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); stageEl.classList.add('dropping'); } });
+stageEl.addEventListener('dragleave', () => stageEl.classList.remove('dropping'));
+stageEl.addEventListener('drop', e => { stageEl.classList.remove('dropping'); const fs = [...(e.dataTransfer.files || [])]; if (!fs.length) return; e.preventDefault(); fs.forEach(readDropped); });
+
+/* ================= 겹친 객체 선택 (같은 자리 다시 클릭) ================= */
+function hitAll(sx, sy) {
+  const out = []; const seen = new Set();
+  for (let k = 0; k < 8; k++) { const h = hitTest(sx, sy, o => !seen.has(o.id)); if (!h) break; seen.add(h.id); out.push(h.id); }
+  return out;
+}
+
+/* ================= 정보 풍선 ================= */
+let balloonTimer = null;
+function balloonAt(sx, sy, id) {
+  clearTimeout(balloonTimer); const b = $('#balloon'); if (b) b.hidden = true;
+  if (id == null || doc.prefs.balloons === false) return;
+  balloonTimer = setTimeout(() => { const o = obj(id); if (!o) return; let bb = $('#balloon'); if (!bb) { bb = el('div', { id: 'balloon', role: 'tooltip' }); $('#stage').append(bb); } bb.textContent = describe(o); bb.hidden = false; bb.style.left = clamp(sx + 14, 4, W - 260) + 'px'; bb.style.top = clamp(sy + 18, 4, H - 40) + 'px'; }, 900);
+}
+
+/* ================= 삼각 축 눈금 ================= */
+function piLabel(k) { // k: π/2 단위 개수
+  if (k === 0) return '0'; const sgn = k < 0 ? '−' : ''; k = Math.abs(k);
+  if (k % 2 === 0) { const n = k / 2; return sgn + (n === 1 ? '' : n) + 'π'; } return sgn + (k === 1 ? '' : k) + 'π/2';
+}
+
+/* ================= 환경설정: 색·글자 ================= */
+const TYPE_DEFAULT_COLOR = { point: 'red', straight: 'ink', circle: 'ink', interior: null, locus: 'purple', plot: 'blue', text: 'ink' };
+function prefColor(kind) { const c = doc.prefs.colors && doc.prefs.colors[kind]; return c || TYPE_DEFAULT_COLOR[kind]; }
+function labelFont() { const s = doc.prefs.labelSize || 16; return `italic 600 ${s}px "STIX Two Text", "Times New Roman", serif`; }
+function colorPrefsDlg() {
+  const P = doc.prefs; P.colors = P.colors || {};
+  const kinds = [['point', '점'], ['straight', '직선류'], ['circle', '원·호'], ['interior', '내부 (비우면 번갈아)'], ['locus', '자취'], ['plot', '함수 그래프'], ['text', '글상자']];
+  const sel2 = (k) => el('select', { id: 'cp-' + k }, el('option', { value: '' }, k === 'interior' ? '번갈아 칠하기' : '기본'), Object.keys(PALETTE).map(c => el('option', { value: c, selected: P.colors[k] === c }, PAL_KO[c])));
+  const bg = el('input', { type: 'color', id: 'cp-bg', value: P.bg || '#ffffff', style: 'width:100%;height:34px;border:0;background:none' });
+  const body = el('div', { class: 'stack' }, el('div', { class: 'sub' }, '새 객체의 기본 색'), el('div', { class: 'row2' }, kinds.map(([k, l]) => field(l, sel2(k)))),
+    el('div', { class: 'sub' }, '스케치 배경'), el('div', { class: 'row2' }, field('배경색', bg), el('label', { class: 'chk', style: 'align-self:end' }, el('input', { type: 'checkbox', id: 'cp-bgd', checked: !P.bg }), '테마 배경 쓰기')),
+    el('div', { class: 'sub' }, '글자'), el('div', { class: 'row3' }, field('레이블 크기', num('cp-ls', P.labelSize || 16, 1)), field('새 글상자 크기', num('cp-cs', P.capSize || 15, 1)), field('새 글상자 글꼴', el('select', { id: 'cp-cf' }, [['sans', '고딕'], ['serif', '명조·수식'], ['mono', '고정폭']].map(([v, l]) => el('option', { value: v, selected: (P.capFont || 'sans') === v }, l))))),
+    el('div', { class: 'sub' }, '그 밖에'), el('div', { class: 'row2' }, field('자취 흐려짐 (초, 0=계속 남김)', num('cp-fd', P.fade || 0, 1)), el('label', { class: 'chk', style: 'align-self:end' }, el('input', { type: 'checkbox', id: 'cp-bl', checked: P.balloons !== false }), '정보 풍선 보이기')));
+  openDlg('색·글자 환경설정', body, [{ label: '기본값으로', run: () => { snap(); delete P.colors; delete P.bg; delete P.labelSize; delete P.capSize; delete P.capFont; delete P.fade; delete P.balloons; refresh(); } }, { label: '취소' }, { label: '확인', primary: true, run: () => {
+    snap(); for (const [k] of kinds) { const v = $('#cp-' + k).value; if (v) P.colors[k] = v; else delete P.colors[k]; }
+    if ($('#cp-bgd').checked) delete P.bg; else P.bg = bg.value;
+    P.labelSize = clamp(getNum('cp-ls') || 16, 8, 48); P.capSize = clamp(getNum('cp-cs') || 15, 8, 72); P.capFont = $('#cp-cf').value; P.fade = Math.max(0, getNum('cp-fd') || 0); P.balloons = $('#cp-bl').checked; refresh();
+  } }]);
+}
+
+/* ================= 사용자 도구 추가 기능 ================= */
+function toolMatchesSelection(t) {
+  const manual = t.givens.filter(g => !g.auto); const os = S().os; if (os.length !== manual.length) return null;
+  const out = []; let j = 0;
+  for (const g of t.givens) { if (g.auto) { out.push(ensureCoord()); continue; } const o = os[j++]; if (givenKind(o) !== g.kind) return null; out.push(o.id); }
+  return out;
+}
+function autoMatchNext() {
+  if (!ctool || !ctool.automatch) return;
+  for (;;) { const g = ctool.givens[ctoolMatched.length]; if (!g || g.auto || g.kind === 'coord') return; const o = doc.objs.find(x => x.label === g.label && givenKind(x) === g.kind && !ctoolMatched.includes(x.id)); if (!o) return; ctoolMatched.push(o.id); }
+}
+
+/* ================= 수식 표기: 윗줄·호 ================= */
+// layoutRich에서 \overline{…}, \arc{…} 처리 (display.js parseRich 확장)
 
 'use strict';
 /* ================= 여러 페이지(시트) ================= */

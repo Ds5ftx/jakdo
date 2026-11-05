@@ -40,10 +40,14 @@ function add(o) {
   doc.objs.push(o); byId.set(o.id, o); dirty = true; return o;
 }
 function defaultColor(o) {
-  if (o.t === 'point') return 'red';
-  if (isInterior(o)) return ['gold', 'blue', 'green', 'magenta', 'orange', 'teal'][(o.id || 0) % 6];
-  if (o.t === 'locus') return 'purple';
-  if (o.t === 'fplot') return 'blue';
+  const pc = k => (typeof prefColor === 'function' ? prefColor(k) : null);
+  if (o.t === 'point') return pc('point') || 'red';
+  if (isInterior(o)) return pc('interior') || ['gold', 'blue', 'green', 'magenta', 'orange', 'teal'][(o.id || 0) % 6];
+  if (o.t === 'locus') return pc('locus') || 'purple';
+  if (o.t === 'fplot') return pc('plot') || 'blue';
+  if (isStraight(o)) return pc('straight') || 'ink';
+  if (o.t === 'circle' || o.t === 'arc') return pc('circle') || 'ink';
+  if (o.t === 'text') return pc('text') || 'ink';
   return 'ink';
 }
 
@@ -234,6 +238,7 @@ function buildMap(x, Gx) {
     let r;
     if (x.rV != null) r = valNum(x.rV, Gx);
     else if (x.rS) { const s1 = P(x.rS[0]), s2 = P(x.rS[1]); if (!s1 || !s2) return null; r = vdist(s1.a, s1.b) / vdist(s2.a, s2.b); }
+    else if (x.rP) { const a = P(x.rP[0]), b = P(x.rP[1]), c = P(x.rP[2]); if (!a || !b || !c) return null; const d = vsub(b, a); r = vdot(vsub(c, a), d) / vdot(d, d); }
     else r = x.r;
     if (!isFinite(r)) return null;
     return { f: p => vadd(C, vmul(vsub(p, C), r)), det: 1, k: Math.abs(r) };
@@ -248,7 +253,7 @@ function xfRefs(x) {
   const r = [];
   if (x.vec) r.push(...x.vec); if (x.c != null) r.push(x.c); if (x.m != null) r.push(x.m);
   for (const k of ['dxV', 'dyV', 'distV', 'angV', 'rV']) if (x[k] != null) r.push(x[k]);
-  if (x.angP) r.push(...x.angP); if (x.rS) r.push(...x.rS);
+  if (x.angP) r.push(...x.angP); if (x.rS) r.push(...x.rS); if (x.rP) r.push(...x.rP);
   return r;
 }
 function xformGeom(t, g, M) {
@@ -376,6 +381,7 @@ const COMP = {
         const r = rawIntersections(oa, ga, ob, gb)[d.i]; return r && r.ok ? r.p : null;
       }
       case 'mid': { const g = PG(o, Gx, 0); return g ? lerp(g.a, g.b, 0.5) : null; }
+      case 'onv': { const po = obj(o.p[0]), g = PG(o, Gx, 0), v = valNum(o.p[1], Gx); return g && isFinite(v) ? pathAt(po, g, v) : null; }
       case 'term': { const g = PG(o, Gx, 0); return g && g.term && g.term[d.i] ? { ...g.term[d.i] } : null; }
       case 'cxf': { const g = PG(o, Gx, 0); if (!g) return null; const q = cxfMapper(o.p[1], o.p[2], Gx)(g); return okp(q) ? { x: q.x, y: q.y } : null; }
       case 'xf': { const g = PG(o, Gx, 0); const M = buildMap(d.xf, Gx); return g && M ? xformGeom('point', g, M) : null; }
@@ -493,7 +499,7 @@ function computeValue(o, Gx) {
     case 'perim': { const s = g(0), t = po(0); if (!s) break; if (t.t === 'polygon') { const L = polyLens(s.pts, true); r = D(L[L.length - 1]); } else if (t.t === 'sector') r = D(Math.abs(s.w) * s.r + 2 * s.r); else if (t.t === 'arcseg') r = D(Math.abs(s.w) * s.r + 2 * s.r * Math.sin(Math.min(Math.abs(s.w), TAU) / 2)); break; }
     case 'circum': { const s = g(0); if (s) r = D(TAU * s.r); break; }
     case 'radius': { const s = g(0); if (s) r = D(s.r); break; }
-    case 'angle': { const a = g(0), v = g(1), b = g(2); if (a && v && b) { const t = Math.abs(signedAngle(a, v, b)); r = A(t); } break; }
+    case 'angle': { const a = g(0), v = g(1), b = g(2); if (a && v && b) { const sa = signedAngle(a, v, b); r = A(doc.prefs.directed ? sa : Math.abs(sa)); } break; }
     case 'area': {
       const s = g(0), t = po(0); if (!s) break;
       if (t.t === 'polygon') r = AR(polyArea(s.pts));
@@ -654,6 +660,7 @@ function computeLocus(o, Gx) {
     return { polys };
   }
   const items = [];
+  if (tgt.t === 'fplot') { for (let i = 0; i <= n; i++) { const g = sampleAt(t0 + (t1 - t0) * i / n); if (g) items.push({ pts: fplotSamples(g, 160).map(s => s.p) }); } return { kind: 'fplot', items }; }
   for (let i = 0; i <= n; i++) { const g = sampleAt(t0 + (t1 - t0) * i / n); if (g) items.push(JSON.parse(JSON.stringify(g))); }
   return { kind: tgt.t, items };
 }

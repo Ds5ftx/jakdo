@@ -229,7 +229,7 @@ function curveIntersections(oa, ga, ob, gb) {
 /* ================= 좌표계 격자 그리기 (극·직사각) ================= */
 function drawCoord(co, o) {
   const b = viewBoundsFn(), O = toS(co.o), ux = co.ux * view.s, uy = co.uy * view.s;
-  const sx = niceStep(ux), sy = co.form === 'rect' ? niceStep(uy) : sx;
+  const trig = !!o.d.trig; let sx = niceStep(ux); if (trig) { const half = Math.PI / 2; sx = half * Math.max(1, Math.round(niceStep(ux * half) )); } const sy = co.form === 'rect' ? niceStep(uy) : (trig ? niceStep(uy) : sx);
   ctx.save(); ctx.lineWidth = 1; ctx.setLineDash([]);
   const gx0 = Math.ceil((b.x0 - co.o.x) / co.ux / sx) * sx, gx1 = (b.x1 - co.o.x) / co.ux;
   const gy0 = Math.ceil((b.y0 - co.o.y) / co.uy / sy) * sy, gy1 = (b.y1 - co.o.y) / co.uy;
@@ -251,16 +251,17 @@ function drawCoord(co, o) {
   if (sel.includes(o.id) || hoverId === o.id) { ctx.strokeStyle = sel.includes(o.id) ? THEME.sel : THEME.hover; ctx.globalAlpha = 0.5; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(0, O.y); ctx.lineTo(W, O.y); ctx.moveTo(O.x, 0); ctx.lineTo(O.x, H); ctx.stroke(); ctx.globalAlpha = 1; }
   if (o.d.ticks !== false) {
     ctx.font = '11px "IBM Plex Sans KR", system-ui, sans-serif'; ctx.fillStyle = THEME.muted; ctx.strokeStyle = THEME.axis; ctx.lineWidth = 1;
-    const lab = v => String(+v.toFixed(6)).replace('-', '−');
+    const lab = v => String(+v.toFixed(6)).replace('-', '−'); const labX = v => trig ? piLabel(Math.round(v / (Math.PI / 2))) : lab(v);
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    for (let x = gx0; x <= gx1; x += sx) { if (Math.abs(x) < sx / 2) continue; const p = O.x + x * ux; ctx.beginPath(); ctx.moveTo(p, O.y - 3); ctx.lineTo(p, O.y + 3); ctx.stroke(); ctx.fillText(lab(x), p, clamp(O.y + 5, 2, H - 14)); }
+    for (let x = gx0; x <= gx1; x += sx) { if (Math.abs(x) < sx / 2) continue; const p = O.x + x * ux; ctx.beginPath(); ctx.moveTo(p, O.y - 3); ctx.lineTo(p, O.y + 3); ctx.stroke(); ctx.fillText(labX(x), p, clamp(O.y + 5, 2, H - 14)); }
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     for (let y = gy0; y <= gy1; y += sy) { if (Math.abs(y) < sy / 2) continue; const p = O.y - y * uy; ctx.beginPath(); ctx.moveTo(O.x - 3, p); ctx.lineTo(O.x + 3, p); ctx.stroke(); ctx.fillText(lab(y), clamp(O.x - 6, 22, W - 2), p); }
     ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillText('0', O.x - 5, O.y + 4);
   }
   ctx.restore();
 }
-function pathFplotGeneral(g) {
+function pathFplotGeneral(g, o) {
+  if (o && o.d && o.d.disc) { for (const s of fplotSamples(g, Math.min(g.n || 120, 400))) if (s.p) { const q = toS(s.p); ctx.moveTo(q.x + 1.6, q.y); ctx.arc(q.x, q.y, 1.6, 0, TAU); } return; }
   if ((g.form || 'yx') === 'yx') return pathFplot(g);
   const S = fplotSamples(g); let pen = false, prev = null;
   for (const s of S) { if (!s.p) { pen = false; continue; } const q = toS(s.p); if (pen && prev && vdist(prev, q) > Math.max(W, H)) pen = false; pen ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); pen = true; prev = q; }
