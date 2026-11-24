@@ -37,7 +37,7 @@ GSPI.expr = (toks, ref) => {
   let s = '';
   for (const t of toks) {
     const hi = t >> 12, lo = t & 0xfff;
-    if (hi === 0) { s += lo <= 9 ? String(lo) : lo === 10 ? '.' : lo === 11 ? '(' : lo === 12 ? ')' : lo === 13 ? ' pi ' : lo === 14 ? ' e ' : lo === 15 ? ' x ' : ''; }
+    if (hi === 0) { s += lo <= 9 ? String(lo) : lo === 10 ? '.' : lo === 11 ? '(' : lo === 12 ? ')' : lo === 13 ? ' pi ' : lo === 14 ? ' e ' : lo === 15 ? ' x ' : lo === 0x101 ? '°' : ''; } // 0x101: 앞 수의 단위가 도(°)
     else if (hi === 1) s += lo === 5 ? ' -' : ' ' + ('+-*/^'[lo] || '+') + ' '; // 5: 부호 바꾸기(단항 −)
     else if (hi === 2) s += ' ' + (GSPI.FNS[lo] || 'abs') + '(';
     else if (hi === 6) { const r = ref(lo); if (r == null) throw new Error('ref'); s += ' #' + r + ' '; }
