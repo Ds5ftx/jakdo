@@ -3693,14 +3693,28 @@ GSPI.expr = (toks, ref) => {
   return s.replace(/\s+/g, ' ').trim();
 };
 
+/* 그림 자료(레코드 1300): [u32 폭][u32 높이] 뒤에 PNG·JPEG·BMP 등 그림 파일 바이트 */
+GSPI.picture = (u8, p, len) => {
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const w = dv.getUint32(p, true), h = dv.getUint32(p + 4, true); let b = u8.slice(p + 8, p + len);
+  let mime = b[0] === 0x89 && b[1] === 0x50 ? 'image/png' : b[0] === 0xff && b[1] === 0xd8 ? 'image/jpeg' : b[0] === 0x42 && b[1] === 0x4d ? 'image/bmp' : b[0] === 0x47 && b[1] === 0x49 ? 'image/gif' : null;
+  if (!mime && b.length >= 40 && new DataView(b.buffer, b.byteOffset).getUint32(0, true) === 40) { // 머리 없는 DIB → BMP 머리를 붙임
+    const hdr = new Uint8Array(14), hv = new DataView(hdr.buffer); hdr[0] = 0x42; hdr[1] = 0x4d; hv.setUint32(2, 14 + b.length, true);
+    const bpp = new DataView(b.buffer, b.byteOffset).getUint16(14, true), clr = new DataView(b.buffer, b.byteOffset).getUint32(32, true);
+    hv.setUint32(10, 14 + 40 + 4 * (clr || (bpp <= 8 ? 1 << bpp : 0)), true); const nb = new Uint8Array(14 + b.length); nb.set(hdr); nb.set(b, 14); b = nb; mime = 'image/bmp';
+  }
+  let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+  return { w, h, src: mime ? 'data:' + mime + ';base64,' + btoa(s) : null };
+};
 GSPI.parse = (ab) => {
   const u8 = new Uint8Array(ab), dv = new DataView(ab);
   if (String.fromCharCode(...u8.slice(0, 4)) !== 'GSP4') throw new Error('GSP 4/5 문서가 아닙니다 (GSP 3 이하 형식은 지원하지 않습니다)');
-  const secs = []; let sec = null, o = null, off = 4;
+  const secs = [], pics = []; let sec = null, o = null, off = 4;
   while (off + 8 <= u8.length) {
     const len = dv.getUint32(off, true), tag = dv.getUint32(off + 4, true), p = off + 8;
     if (p + len > u8.length) break;
     if (tag === 902) { sec = { type: dv.getUint16(p, true), name: '', objs: [] }; secs.push(sec); }
+    else if (tag === 1300 && len > 8) pics.push(GSPI.picture(u8, p, len));
     else if (tag === 1100 && sec) { let e = p; while (e < p + len && u8[e]) e++; sec.name = GSPI.dec(u8.slice(p, e)); }
     else if (tag === 1000 && sec && len >= 8) { sec.scroll = { x: dv.getInt16(p + 4, true), y: dv.getInt16(p + 6, true) }; }
     else if (tag === 2000 && sec) {
@@ -3715,7 +3729,7 @@ GSPI.parse = (ab) => {
     }
     off = p + len;
   }
-  return { u8, dv, secs };
+  return { u8, dv, secs, pics };
 };
 
 /* 구역 하나를 현재 doc 에 객체로 만든다. 반환: 건너뛴 객체 수 */
@@ -3749,8 +3763,16 @@ GSPI.build = (F, sec, links) => {
     if (P.some(v => v == null)) { map[i] = null; skipped++; (GSPI.miss = GSPI.miss || []).push('dep:' + s.code + '/' + s.k + '@' + sec.type); return; }
     const po = j => obj(P[j]);
     try {
-      switch (s.k === 23 ? 62 : s.code) {
+      switch (s.k === 23 ? 62 : (s.rec[2216] && s.rec[8004]) ? 0 : s.code) {
         case 0: {
+          if (s.rec[2216] && s.rec[8004]) { // 그림
+            const pic = F.pics[dv.getUint16(s.rec[8004].p, true)]; if (!pic || !pic.src) break;
+            const m = s.rec[2216], a = D(m, 0), b = D(m, 8), tx = D(m, 16), c = D(m, 24), d = D(m, 32), ty = D(m, 40);
+            const TL = W(tx, ty), TR = W(tx + a * pic.w, ty + c * pic.w), BL = W(tx + b * pic.h, ty + d * pic.h);
+            if (Math.abs(b) < 1e-9 && Math.abs(c) < 1e-9 && Math.abs(a - d) < 1e-9 && a > 0) id = add({ t: 'picture', k: 'free', p: [], d: { src: pic.src, w: pic.w, h: pic.h, ww: TR.x - TL.x, x: TL.x, y: TL.y }, color: 'ink' }).id;
+            else { const q = [TL, TR, BL].map(w => { const pid = P0(w); const po = obj(pid); po.hidden = true; po.showLabel = false; return pid; }); id = add({ t: 'picture', k: 'pts', p: q, d: { src: pic.src, w: pic.w, h: pic.h }, color: 'ink' }).id; }
+            obj(id).hidden = !!(s.fl & 1); map[i] = id; return;
+          }
           if (s.k === 4 || s.k === 41) { const r = s.rec[2201]; if (!r) break; const w = W(D(r, 0), D(r, 8)); id = P0(w); if (s.k === 41) { obj(id).isOrigin = true; pend.O = id; } break; }
           if (s.k === 39) { id = ensureCoord(); map[i] = id; return; }
           if (s.k === 19 || s.k === 59) { const r = s.rec[2300]; if (!r) break; const q = s.rec[2200]; const sx = q ? dv.getInt16(q.p, true) : dv.getUint16(r.p + 12, true), sy = q ? dv.getInt16(q.p + 2, true) : dv.getUint16(r.p + 14, true); id = text(s, GSPI.markup(u8, r.p + 18, r.p + r.len), sx, sy); obj(id).hidden = !!(s.fl & 1); if (q) { const w = dv.getInt16(q.p + 4, true) - sx; if (w > 60 && obj(id).d.text.length > 30) obj(id).d.wrap = w + 24; } break; }
@@ -4042,10 +4064,19 @@ GSPX.markup = (text, maxw = 640) => {
 };
 GSPX.setPref = (u8, tag, val, at = 0) => { const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength); let off = 0; while (off + 8 <= u8.length) { const len = dv.getUint32(off, true), t = dv.getUint32(off + 4, true); if (t === tag && len >= at + 2) { dv.setUint16(off + 8 + at, val, true); return; } off += 8 + len; } };
 
+GSPX.picBytes = (src, w, h) => { // 그림을 PNG 바이트로 (PNG가 아니면 캔버스로 다시 그려 변환)
+  try {
+    let url = src;
+    if (!/^data:image\/png;base64,/.test(src)) { const im = imgOf(src); if (!im.complete || !im.naturalWidth) return null; const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; c.getContext('2d').drawImage(im, 0, 0); url = c.toDataURL('image/png'); w = c.width; h = c.height; }
+    const bin = atob(url.split(',')[1]); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    if (!w || !h) { const dv = new DataView(bytes.buffer); w = dv.getUint32(16); h = dv.getUint32(20); }
+    return { bytes, w, h };
+  } catch (e) { return null; }
+};
 function buildGSP() {
   stashPage(); const keep = doc; const W = new GSPX.W(); let skipped = 0, fixed = 0;
   const head = GSPX.b64(GSPX_T.head); new DataView(head.buffer).setUint16(14, book.pages.length, true); new DataView(head.buffer).setUint16(16, 0, true); new DataView(head.buffer).setUint16(12 + 24, 1 + book.pages.length, true); // 구역 수(부록 1 + 페이지)
-  W.raw(head);
+  const pics = []; // 그림 자료: 문서 머리(부록 구역)의 1300 레코드로 저장
   try {
     book.pages.forEach((pg, pi) => {
       doc = pg.doc; reindex(); recompute();
@@ -4059,7 +4090,7 @@ function buildGSP() {
         let e = opt.e ?? 0x121; if (o && opt.e == null && o.t !== 'point' && o.t !== 'value') { e = 0x120 + Math.max(1, Math.min(3, Math.round(o.w || 1))); if (o.dash) e = 0x220 + (e & 0xf); }
         const hid = (o && o.hidden) || opt.hidden ? 1 : 0;
         const h = new GSPX.B().u32(code | ((hid | (opt.fl || 0)) << 16)).u16(0).u16(c).u16(k).u16(e).u8(r).u8(g).u8(b).u8(0);
-        if (opt.interior) h.hex('ff7f0000').zeros(8); else h.hex('ffff0000c1bdf0ff00000000');
+        if (opt.interior) h.hex('ff7f0000').zeros(8); else if (opt.pic) h.hex('ffff0000').zeros(8); else h.hex('ffff0000c1bdf0ff00000000');
         const rs = [];
         if (par && par.length) { const pb = new GSPX.B().u32(par.length); par.forEach(p => pb.u32(p)); rs.push([2002, pb.get()]); }
         rs.push(...extra);
@@ -4121,7 +4152,7 @@ function buildGSP() {
             else if (pk === 'xf') id = null;
             if (id == null && pk !== 'xf') throw 0;
           }
-          if (id == null && o.k === 'xf') {
+          if (id == null && o.k === 'xf' && o.t !== 'picture') {
             const src = obj(o.p[0]); const x = o.d.xf || o.d; const k = o.t === 'polygon' ? GSPX.polyK(src.p.length) : kOf(o); if (!k) throw 0;
             const c = cOf(o), e = o.t === 'point' ? { e: 0x221, interior: isInterior(o) } : { interior: isInterior(o) };
             const iS = P1(src.id); let rs = [];
@@ -4162,6 +4193,12 @@ function buildGSP() {
             else if (o.k === 'func' && (!o.d.form || o.d.form === 'yx')) { const T = GSPX.tokens(o.d.expr); const l = GSPX.label({ label: o.label || 'f', showLabel: false }, 6); id = T.refs.length ? emit(71, 11, 57, T.refs.map(P1), o, [[2311, exprRec(o, T.toks, 'func')], [2005, l], [2008, Uint8Array.of(0, 0)]]) : emit(0, 11, 57, [], o, [[2311, exprRec(o, T.toks, 'func')], [2005, l], [2008, Uint8Array.of(1, 0)], [2211, GSPX.rect(o)]]); }
             else if (o.k === 'param') { const T = GSPX.tokens(String(+(+o.d.v).toFixed(6))); const l = GSPX.label({ label: o.label || 't', showLabel: false }, 6); id = emit(0, 11, 79, [], o, [[2311, exprRec(o, T.toks.length ? T.toks : [0], 'param')], [2005, l], [2008, Uint8Array.of(1, 0)], [2211, GSPX.rect(o)]]); }
             else throw 0;
+          } else if (id == null && o.t === 'picture') {
+            if (!g || !g.TL || !g.src) throw 0; const pb = GSPX.picBytes(g.src, o.d.w, o.d.h); if (!pb) throw 0;
+            const [x0, y0] = PX(g.TL.x, g.TL.y), [x1, y1] = PX(g.TR.x, g.TR.y), [x2, y2] = PX(g.BL.x, g.BL.y);
+            const k = pics.length; pics.push(new GSPX.B().u32(pb.w).u32(pb.h).bytes(pb.bytes).get());
+            const hdr = { color: '#ff0000', hidden: o.hidden };
+            id = emit(0, 16, 78, [], hdr, [[2316, new GSPX.B().u32(pb.w).u32(pb.h).u32(pb.w).u32(pb.h).get()], [2216, new GSPX.B().f64((x1 - x0) / pb.w).f64((x2 - x0) / pb.h).f64(x0).f64((y1 - y0) / pb.w).f64((y2 - y0) / pb.h).f64(y0).get()], [8004, new GSPX.B().u16(k).get()]], { e: 0x121, pic: true });
           } else if (id == null && o.t === 'text') {
             const txt = String(o.d.text || '').replace(/\{#\d+\}/g, '').replace(/[*_]{1,2}([^*_]+)[*_]{1,2}/g, '$1');
             const mk = GSPX.markup(txt, o.d.wrap || 640); const sx = o.d.sx || 10, sy = o.d.sy || 10;
@@ -4195,7 +4232,10 @@ function buildGSP() {
     });
     W.rec(901, new Uint8Array(0));
   } finally { doc = keep; reindex(); recompute(); }
-  return { bytes: W.out(), skipped, fixed };
+  const F = new GSPX.W(); let at = 4; const hv = new DataView(head.buffer); // 머리에서 1006 레코드 뒤에 그림 레코드를 끼움
+  while (at + 8 <= head.length) { const len = hv.getUint32(at, true), t = hv.getUint32(at + 4, true); at += 8 + len; if (t === 1006) break; }
+  F.raw(head.slice(0, at)); for (const p of pics) F.rec(1300, p); F.raw(head.slice(at)); F.raw(W.out());
+  return { bytes: F.out(), skipped, fixed };
 }
 function fileSaveGSP() {
   let r; try { r = buildGSP(); } catch (e) { return toast('GSP 문서로 저장하지 못했습니다: ' + e.message); }

@@ -46,14 +46,28 @@ GSPI.expr = (toks, ref) => {
   return s.replace(/\s+/g, ' ').trim();
 };
 
+/* 그림 자료(레코드 1300): [u32 폭][u32 높이] 뒤에 PNG·JPEG·BMP 등 그림 파일 바이트 */
+GSPI.picture = (u8, p, len) => {
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const w = dv.getUint32(p, true), h = dv.getUint32(p + 4, true); let b = u8.slice(p + 8, p + len);
+  let mime = b[0] === 0x89 && b[1] === 0x50 ? 'image/png' : b[0] === 0xff && b[1] === 0xd8 ? 'image/jpeg' : b[0] === 0x42 && b[1] === 0x4d ? 'image/bmp' : b[0] === 0x47 && b[1] === 0x49 ? 'image/gif' : null;
+  if (!mime && b.length >= 40 && new DataView(b.buffer, b.byteOffset).getUint32(0, true) === 40) { // 머리 없는 DIB → BMP 머리를 붙임
+    const hdr = new Uint8Array(14), hv = new DataView(hdr.buffer); hdr[0] = 0x42; hdr[1] = 0x4d; hv.setUint32(2, 14 + b.length, true);
+    const bpp = new DataView(b.buffer, b.byteOffset).getUint16(14, true), clr = new DataView(b.buffer, b.byteOffset).getUint32(32, true);
+    hv.setUint32(10, 14 + 40 + 4 * (clr || (bpp <= 8 ? 1 << bpp : 0)), true); const nb = new Uint8Array(14 + b.length); nb.set(hdr); nb.set(b, 14); b = nb; mime = 'image/bmp';
+  }
+  let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+  return { w, h, src: mime ? 'data:' + mime + ';base64,' + btoa(s) : null };
+};
 GSPI.parse = (ab) => {
   const u8 = new Uint8Array(ab), dv = new DataView(ab);
   if (String.fromCharCode(...u8.slice(0, 4)) !== 'GSP4') throw new Error('GSP 4/5 문서가 아닙니다 (GSP 3 이하 형식은 지원하지 않습니다)');
-  const secs = []; let sec = null, o = null, off = 4;
+  const secs = [], pics = []; let sec = null, o = null, off = 4;
   while (off + 8 <= u8.length) {
     const len = dv.getUint32(off, true), tag = dv.getUint32(off + 4, true), p = off + 8;
     if (p + len > u8.length) break;
     if (tag === 902) { sec = { type: dv.getUint16(p, true), name: '', objs: [] }; secs.push(sec); }
+    else if (tag === 1300 && len > 8) pics.push(GSPI.picture(u8, p, len));
     else if (tag === 1100 && sec) { let e = p; while (e < p + len && u8[e]) e++; sec.name = GSPI.dec(u8.slice(p, e)); }
     else if (tag === 1000 && sec && len >= 8) { sec.scroll = { x: dv.getInt16(p + 4, true), y: dv.getInt16(p + 6, true) }; }
     else if (tag === 2000 && sec) {
@@ -68,7 +82,7 @@ GSPI.parse = (ab) => {
     }
     off = p + len;
   }
-  return { u8, dv, secs };
+  return { u8, dv, secs, pics };
 };
 
 /* 구역 하나를 현재 doc 에 객체로 만든다. 반환: 건너뛴 객체 수 */
@@ -102,8 +116,16 @@ GSPI.build = (F, sec, links) => {
     if (P.some(v => v == null)) { map[i] = null; skipped++; (GSPI.miss = GSPI.miss || []).push('dep:' + s.code + '/' + s.k + '@' + sec.type); return; }
     const po = j => obj(P[j]);
     try {
-      switch (s.k === 23 ? 62 : s.code) {
+      switch (s.k === 23 ? 62 : (s.rec[2216] && s.rec[8004]) ? 0 : s.code) {
         case 0: {
+          if (s.rec[2216] && s.rec[8004]) { // 그림
+            const pic = F.pics[dv.getUint16(s.rec[8004].p, true)]; if (!pic || !pic.src) break;
+            const m = s.rec[2216], a = D(m, 0), b = D(m, 8), tx = D(m, 16), c = D(m, 24), d = D(m, 32), ty = D(m, 40);
+            const TL = W(tx, ty), TR = W(tx + a * pic.w, ty + c * pic.w), BL = W(tx + b * pic.h, ty + d * pic.h);
+            if (Math.abs(b) < 1e-9 && Math.abs(c) < 1e-9 && Math.abs(a - d) < 1e-9 && a > 0) id = add({ t: 'picture', k: 'free', p: [], d: { src: pic.src, w: pic.w, h: pic.h, ww: TR.x - TL.x, x: TL.x, y: TL.y }, color: 'ink' }).id;
+            else { const q = [TL, TR, BL].map(w => { const pid = P0(w); const po = obj(pid); po.hidden = true; po.showLabel = false; return pid; }); id = add({ t: 'picture', k: 'pts', p: q, d: { src: pic.src, w: pic.w, h: pic.h }, color: 'ink' }).id; }
+            obj(id).hidden = !!(s.fl & 1); map[i] = id; return;
+          }
           if (s.k === 4 || s.k === 41) { const r = s.rec[2201]; if (!r) break; const w = W(D(r, 0), D(r, 8)); id = P0(w); if (s.k === 41) { obj(id).isOrigin = true; pend.O = id; } break; }
           if (s.k === 39) { id = ensureCoord(); map[i] = id; return; }
           if (s.k === 19 || s.k === 59) { const r = s.rec[2300]; if (!r) break; const q = s.rec[2200]; const sx = q ? dv.getInt16(q.p, true) : dv.getUint16(r.p + 12, true), sy = q ? dv.getInt16(q.p + 2, true) : dv.getUint16(r.p + 14, true); id = text(s, GSPI.markup(u8, r.p + 18, r.p + r.len), sx, sy); obj(id).hidden = !!(s.fl & 1); if (q) { const w = dv.getInt16(q.p + 4, true) - sx; if (w > 60 && obj(id).d.text.length > 30) obj(id).d.wrap = w + 24; } break; }
