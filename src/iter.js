@@ -15,7 +15,7 @@ function tableRows(o) {
 function tableHeads(o) { return o.k === 'iter' ? ['n', ...o.p.slice(1).map(id => obj(id) ? valueName(obj(id)) : '?')] : o.p.map(id => obj(id) ? valueName(obj(id)) : '?'); }
 function drawTable(o, selected, hover) {
   const heads = tableHeads(o), { rows, live } = tableRows(o); const all = live ? rows.concat([live]) : rows;
-  ctx.save(); ctx.font = FONT_VAL; const pad = 7, lh = 22;
+  ctx.save(); const tf = tableFont(o), tsz = (o.d.size || doc.prefs.tableSize || 14); ctx.font = tf; const pad = 7, lh = Math.round(tsz * 1.6);
   const shown = all.slice(-200);
   const widths = heads.map((h, j) => Math.max(ctx.measureText(h).width, ...shown.map(r => ctx.measureText(cellStr(r[j])).width)) + pad * 2);
   const w = widths.reduce((a, b) => a + b, 0), h = lh * (shown.length + 1) + 2; const x = o.d.sx, y = o.d.sy; o._bb = { x, y, w, h };
@@ -26,8 +26,8 @@ function drawTable(o, selected, hover) {
   let cx = x; for (let j = 0; j < widths.length - 1; j++) { cx += widths[j]; ctx.moveTo(Math.round(cx) + 0.5, y); ctx.lineTo(Math.round(cx) + 0.5, y + h); }
   for (let i = 1; i <= shown.length; i++) { ctx.moveTo(x, y + i * lh + 0.5); ctx.lineTo(x + w, y + i * lh + 0.5); } ctx.stroke();
   ctx.textBaseline = 'middle'; ctx.textAlign = 'right';
-  cx = x; heads.forEach((hd, j) => { ctx.fillStyle = THEME.ink; ctx.font = '600 13px "IBM Plex Sans KR", system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillText(hd, cx + widths[j] / 2, y + lh / 2 + 1); cx += widths[j]; });
-  ctx.font = FONT_VAL; ctx.textAlign = 'right';
+  cx = x; heads.forEach((hd, j) => { ctx.fillStyle = THEME.ink; ctx.font = '600 ' + tf; ctx.textAlign = 'center'; ctx.fillText(hd, cx + widths[j] / 2, y + lh / 2 + 1); cx += widths[j]; });
+  ctx.font = tf; ctx.textAlign = 'right';
   shown.forEach((r, i) => { let c2 = x; const isLive = live && i === shown.length - 1; ctx.fillStyle = isLive ? THEME.muted : THEME.ink; r.forEach((v, j) => { ctx.fillText(cellStr(v), c2 + widths[j] - pad, y + (i + 1.5) * lh + 1); c2 += widths[j]; }); });
   ctx.restore();
 }
@@ -66,7 +66,7 @@ function iterChain(o) {
   const idx = doc.objs.indexOf(o); const down = descendants(o.d.pre);
   return doc.objs.slice(0, idx).filter(x => down.has(x.id) && !o.d.pre.includes(x.id) && !['iter', 'table', 'button', 'text', 'tplot'].includes(x.t) && !(x.t === 'value' && x.k === 'fdef'));
 }
-function copyGeom(g) { return g == null ? g : JSON.parse(JSON.stringify(g, (k, v) => typeof v === 'function' ? undefined : v)); }
+function copyGeom(g) { return g == null ? g : JSON.parse(JSON.stringify(g, (k, v) => typeof v === 'function' || k === 'src' || k === 'mesh' ? undefined : v)); }
 function computeIter(o, Gx) {
   const pre = o.d.pre, maps = o.d.maps; if (!pre.every(id => Gx[id])) return null;
   let depth = o.d.depthV != null ? Math.floor(valNum(o.d.depthV, Gx)) : o.d.depth; if (!isFinite(depth)) return null; depth = clamp(depth, 0, 400);
@@ -98,9 +98,10 @@ function computeIter(o, Gx) {
 }
 function drawIter(o, g, selected) {
   ctx.save();
+  for (const it of g.items) { const s = obj(it.id); if (s && s.t === 'picture' && G[s.id]) drawPicture(s, { ...it.g, src: G[s.id].src }, false, false); }
   const passes = [it => isInterior(obj(it.id)), it => !isInterior(obj(it.id)) && obj(it.id).t !== 'point', it => obj(it.id).t === 'point'];
   for (const pass of passes) for (const it of g.items) {
-    const s = obj(it.id); if (!s || !pass(it)) continue; const gg = it.g;
+    const s = obj(it.id); if (!s || !pass(it) || s.t === 'picture') continue; const gg = it.g;
     if (s.t === 'point') { const p = toS(gg); if (p.x < -10 || p.y < -10 || p.x > W + 10 || p.y > H + 10) continue; ctx.beginPath(); ctx.arc(p.x, p.y, [0, 2, 2.8, 4][s.ps || 2], 0, TAU); ctx.fillStyle = colOf(s); ctx.fill(); continue; }
     ctx.beginPath(); if (s.t === 'locus') continue; pathGeom(s.t, gg);
     if (isInterior(s)) { ctx.fillStyle = rgba(colOf(s), s.alpha ?? 0.26); ctx.fill('evenodd'); }
@@ -192,9 +193,10 @@ function defineCxfDlg() {
   openDlg('사용자 변환 정의', body, [{ label: '취소' }, { label: '정의', primary: true, run: () => { snap(); doc.cxf = doc.cxf || []; doc.cxf.push({ id: Date.now(), name: $('#cx-n').value.trim() || '사용자 변환', pre: pre.id, img: img.id }); toast('변환 메뉴 아래에 추가했습니다'); } }]);
 }
 function applyCxf(t) {
-  const os = S().os.filter(o => o.id !== t.pre && o.id !== t.img && (o.t === 'point' || isPath(o))); if (!os.length) return toast('변환할 점이나 경로를 선택하세요');
+  const os = S().os.filter(o => o.id !== t.pre && o.id !== t.img && (o.t === 'point' || isPath(o) || o.t === 'picture')); if (!os.length) return toast('변환할 점·경로·그림을 선택하세요');
   snap(); const out = os.map(o => {
     if (o.t === 'point') { const p = add({ t: 'point', k: 'cxf', p: [o.id, t.pre, t.img], color: o.color, ps: o.ps }); p.label = (o.label || 'P') + '′'; p.showLabel = o.showLabel; return p.id; }
+    if (o.t === 'picture') return add({ t: 'picture', k: 'cxf', p: [o.id, t.pre, t.img], d: { n: 12 }, color: o.color }).id;
     return add({ t: 'locus', k: 'cxf', p: [o.id, t.pre, t.img], d: {}, color: o.color, w: o.w, dash: o.dash }).id;
   });
   setSel(out);

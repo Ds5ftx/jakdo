@@ -1,6 +1,6 @@
 'use strict';
 /* ================= 화면/뷰 ================= */
-const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const cv = document.getElementById('cv'); let ctx = cv.getContext('2d');
 let W = 800, H = 600, DPR = 1;
 const view = { ox: 400, oy: 300, s: PXCM };
 const toS = p => ({ x: view.ox + p.x * view.s, y: view.oy - p.y * view.s });
@@ -22,7 +22,7 @@ const FONT_LABEL = 'italic 600 16px "STIX Two Text", "Times New Roman", serif';
 const FONT_VAL = '14px "IBM Plex Sans KR", system-ui, sans-serif';
 
 function resize() {
-  const r = cv.parentElement.getBoundingClientRect(); DPR = window.devicePixelRatio || 1;
+  const r = cv.parentElement.getBoundingClientRect(); DPR = (doc && doc.prefs && doc.prefs.hiDPI === false) ? 1 : (window.devicePixelRatio || 1);
   const nw = Math.max(50, r.width), nh = Math.max(50, r.height);
   if (W && H && (nw !== W || nh !== H)) { view.ox += (nw - W) / 2; view.oy += (nh - H) / 2; }
   W = nw; H = nh; cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR); cv.style.width = W + 'px'; cv.style.height = H + 'px';
@@ -168,7 +168,8 @@ function draw() {
   if (dirty) recompute();
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   if (THEME._paper == null) THEME._paper = THEME.paper; THEME.paper = doc.prefs.bg || THEME._paper;
-  ctx.fillStyle = THEME.paper; ctx.fillRect(0, 0, W, H);
+  applyPalette();
+  if (!exportNoBg) { ctx.fillStyle = THEME.paper; ctx.fillRect(0, 0, W, H); } else ctx.clearRect(0, 0, W, H);
   const selSet = new Set(sel);
   const ordObjs = doc.objs.slice().sort((a, b) => (a.z || 0) - (b.z || 0));
   const vis = o => !o.hidden || showHiddenGhost;
@@ -190,7 +191,8 @@ function draw() {
     }
     ctx.restore();
   }
-  for (const o of ordObjs) { if (o.t === 'picture' && vis(o) && G[o.id]) drawPicture(o, G[o.id], selSet.has(o.id), hoverId === o.id); }
+  for (const o of ordObjs) { if (o.t === 'picture' && vis(o) && G[o.id]) (o.k === 'cxf' ? drawMeshPicture : drawPicture)(o, G[o.id], selSet.has(o.id), hoverId === o.id); }
+  for (const o of ordObjs) { if (o.t !== 'locus' || !vis(o) || !G[o.id] || G[o.id].kind !== 'picture') continue; const g = G[o.id]; for (const it of g.items) drawPicture({ d: {}, alpha: 0.5 }, { ...it, src: g.src }, false, false); }
   // 내부
   for (const o of ordObjs) {
     if (!isInterior(o) || !vis(o)) continue; const g = G[o.id]; if (!g) continue;
@@ -211,6 +213,7 @@ function draw() {
   }
   for (const o of paths) {
     const g = G[o.id]; ctx.save(); if (o.hidden) ctx.globalAlpha = 0.25;
+    if (o.t === 'locus' && g.kind === 'picture') { ctx.restore(); continue; }
     if (o.t === 'locus' && g.items) { ctx.globalAlpha *= g.kind === 'point' ? 1 : 0.55; setStroke(o); ctx.lineWidth = Math.max(0.8, ctx.lineWidth * 0.6); }
     else setStroke(o);
     ctx.beginPath();
@@ -234,10 +237,11 @@ function draw() {
   for (const o of ordObjs) {
     o._lb = null;
     if (!o.showLabel || !o.label || o.hidden) continue; const a = labelAnchor(o, G[o.id]); if (!a) continue;
+    ctx.font = objLabelFont(o); const lsz = (o.lf && o.lf.size) || doc.prefs.labelSize || 16;
     const off = o.lo || defaultLabelOffset(o), txt = disp(o.label), w = ctx.measureText(txt).width;
-    const x = a.x + off.x, y = a.y + off.y + 14;
-    o._lb = { x, y: y - 14, w, h: 18 };
-    ctx.fillStyle = THEME.paper; ctx.globalAlpha = 0.7; ctx.fillRect(x - 1, y - 13, w + 2, 17); ctx.globalAlpha = 1;
+    const x = a.x + off.x, y = a.y + off.y + lsz * 0.88;
+    o._lb = { x, y: y - lsz * 0.88, w, h: lsz * 1.12 };
+    ctx.fillStyle = THEME.paper; ctx.globalAlpha = 0.7; ctx.fillRect(x - 1, y - lsz * 0.82, w + 2, lsz * 1.06); ctx.globalAlpha = 1;
     ctx.fillStyle = selSet.has(o.id) && hitPartSel === 'label' ? THEME.sel : col(o.t === 'point' || isInterior(o) ? 'ink' : o.color);
     ctx.fillText(txt, x, y);
   }
@@ -268,6 +272,7 @@ function drawAngleMark(o, g, hi) {
       if (k === 0) { ctx.lineTo(V.x, V.y); ctx.closePath(); ctx.fillStyle = fillC; ctx.fill(); }
     }
   }
+  if (o.d.dir && !(right && (o.d.n || 1) === 1)) { const R0 = (o.d.r || 20) + ((o.d.n || 1) - 1) * 4.5, ae = aA + sweep; const E = { x: V.x + R0 * Math.cos(ae), y: V.y - R0 * Math.sin(ae) }; const tg = { x: -Math.sin(ae), y: -Math.cos(ae) }; const nv = { x: Math.cos(ae), y: -Math.sin(ae) }; ctx.beginPath(); ctx.moveTo(E.x + tg.x * 2, E.y + tg.y * 2); ctx.lineTo(E.x - tg.x * 7 + nv.x * 3.5, E.y - tg.y * 7 + nv.y * 3.5); ctx.lineTo(E.x - tg.x * 7 - nv.x * 3.5, E.y - tg.y * 7 - nv.y * 3.5); ctx.closePath(); ctx.fillStyle = ctx.strokeStyle; ctx.fill(); }
   o._arc = { V, R: o.d.r || 20, a0: aA, sw: sweep };
   ctx.restore();
 }
@@ -275,11 +280,11 @@ function drawScreenObj(o, selected, hover) {
   ctx.save(); if (o.hidden) ctx.globalAlpha = 0.35;
   if (o.t === 'value') {
     const txt = valueText(o), isParam = o.k === 'param';
-    const b = screenBoxDraw(o, [txt], { pad: isParam ? 7 : 4 });
+    const vf = valueFont(o), vsz = o.d.size || doc.prefs.valSize || 14; const b = screenBoxDraw(o, [txt], { pad: isParam ? 7 : 4, font: vf, lh: vsz * 1.36 });
     if (isParam) { roundRect(b.x, b.y, b.w, b.h, 4); ctx.fillStyle = THEME.chip; ctx.fill(); ctx.strokeStyle = THEME.chipLine; ctx.lineWidth = 1; ctx.stroke(); }
     if (selected || hover) { roundRect(b.x - 2, b.y - 2, b.w + 4, b.h + 4, 4); ctx.strokeStyle = selected ? THEME.sel : THEME.hover; ctx.lineWidth = selected ? 2 : 1.2; ctx.setLineDash(selected ? [] : [3, 3]); ctx.stroke(); ctx.setLineDash([]); }
     if (!isParam) { ctx.globalAlpha *= 0.82; ctx.fillStyle = THEME.paper; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.globalAlpha = o.hidden ? 0.35 : 1; }
-    ctx.fillStyle = colOf(o); ctx.textBaseline = 'top'; ctx.font = FONT_VAL; ctx.fillText(txt, b.x + b.pad, b.y + b.pad + 1);
+    ctx.fillStyle = colOf(o); ctx.textBaseline = 'top'; ctx.font = vf; ctx.fillText(txt, b.x + b.pad, b.y + b.pad + 1);
   } else if (o.t === 'text') { ctx.restore(); drawRichText(o, selected, hover); return;
   } else if (o.t === 'text_old') {
     const lines = (o.d.text || '').split('\n'); const fs = o.d.size || 15;

@@ -4,7 +4,7 @@
 """
 from pathlib import Path
 ROOT = Path(__file__).parent
-ORDER = ["core.js", "render.js", "graph.js", "ui.js", "menus.js", "iter.js", "tools.js", "display.js", "extras.js", "pages.js", "examples.js"]
+ORDER = ["core.js", "render.js", "graph.js", "ui.js", "menus.js", "iter.js", "tools.js", "display.js", "extras.js", "complete.js", "pages.js", "examples.js"]
 
 def main():
     js = "\n".join((ROOT / "src" / f).read_text(encoding="utf-8") for f in ORDER)

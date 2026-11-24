@@ -47,8 +47,8 @@ function instantiateTool(tool, matched) {
     if (o.t === 'coord') continue;
     if (isScreenObj(o)) { const pos = nextScreenPos(); o.d.sx = pos.sx; o.d.sy = pos.sy; }
     const shown = tool.shown.includes(old); o.hidden = !shown || !!c.hidden;
-    const keep = tool.keepLabels && o.label && !doc.objs.some(x => x.label === o.label); const lab0 = o.label;
-    add(o); if (o.label || o.t === 'point') giveLabel(o, shown && (o.t === 'point' ? (doc.prefs.autoLabel || keep) && c.showLabel !== false : !!c.showLabel)); if (keep) o.label = lab0;
+    const keep = (tool.labelMode ? tool.labelMode === 'keep' : tool.keepLabels) && o.label && !doc.objs.some(x => x.label === o.label); const lab0 = o.label;
+    add(o); if (o.label || o.t === 'point') giveLabel(o, shown && (o.t === 'point' ? (doc.prefs.autoLabel || keep) && c.showLabel !== false : !!c.showLabel)); if (keep) o.label = lab0; const gl = toolResultLabel(tool, o, shown); if (gl) o.label = gl;
     map.set(old, o.id); if (shown) out.push(o.id);
   }
   return out;
@@ -61,10 +61,10 @@ function createToolDlg() {
     field('도구 설명 (스크립트 보기에 표시)', el('textarea', { id: 'tl-c', rows: 2 })),
     el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'tl-lib' }), '도구 폴더(이 브라우저)에도 저장해 다른 페이지·문서에서 쓰기'),
     el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'tl-am' }), '같은 레이블의 객체가 있으면 주어진 것에 자동 연결'),
-    el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'tl-kl' }), '결과에 원래 레이블 쓰기 (겹치지 않을 때)'),
+    el('div', { class: 'row2' }, field('결과의 레이블', el('select', { id: 'tl-lm' }, el('option', { value: 'auto' }, '새로 붙이기 (A, B, …)'), el('option', { value: 'keep' }, '원래 레이블 쓰기'), el('option', { value: 'prefix' }, '정한 이름 + 번호'))), field('이름 (예: M)', el('input', { id: 'tl-lp', value: 'M' }))),
     el('p', { class: 'note' }, '선택한 객체 가운데 다른 선택 객체에 의존하지 않는 것이 주어진 것(입력), 나머지가 결과가 됩니다. 선택하지 않은 중간 객체는 도구를 쓸 때 숨겨진 채로 만들어집니다. 주어진 것을 고른 순서대로 클릭하게 됩니다.'));
   openDlg('사용자 도구 만들기', body, [{ label: '취소' }, { label: '만들기', primary: true, run: () => {
-    const t = buildTool($('#tl-n').value.trim() || '새 도구'); if (t.err) { toast(t.err); return false; } t.comment = $('#tl-c').value.trim(); t.automatch = $('#tl-am').checked; t.keepLabels = $('#tl-kl').checked;
+    const t = buildTool($('#tl-n').value.trim() || '새 도구'); if (t.err) { toast(t.err); return false; } t.comment = $('#tl-c').value.trim(); t.automatch = $('#tl-am').checked; t.labelMode = $('#tl-lm').value; t.labelPrefix = $('#tl-lp').value.trim(); t.keepLabels = t.labelMode === 'keep';
     snap(); doc.tools = doc.tools || []; doc.tools.push(t);
     if ($('#tl-lib').checked) { const a = toolLib().filter(x => x.name !== t.name); a.push(t); saveToolLib(a); }
     activateTool(t); toast('도구 “' + t.name + '”을(를) 만들었습니다. 주어진 것 ' + t.givens.filter(g => !g.auto).length + '개를 차례로 클릭하세요');

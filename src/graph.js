@@ -22,7 +22,7 @@ function fplotAt(g, t) {
   return isFinite(x) && isFinite(y) ? cToW(g.co, x, y) : null;
 }
 function fplotSamples(g, n) {
-  const [t0, t1] = fplotRange(g); n = n || g.n || 400; const out = [];
+  const [t0, t1] = fplotRange(g); n = n || g.n || doc.prefs.plotN || 400; const out = [];
   if (!(t1 > t0)) return out;
   for (let i = 0; i <= n; i++) { const t = t0 + (t1 - t0) * i / n; out.push({ t, p: fplotAt(g, t) }); }
   return out;
@@ -46,8 +46,7 @@ function compileFn(id, Gx) { const g = Gx[id]; return g && g.f ? g.f : (() => Na
 /* ================= 함수 값 객체 (새 함수 / 도함수) ================= */
 function computeFunc(o, Gx) {
   if (o.k === 'data') {
-    const xs = o.d.xs, ys = o.d.ys;
-    const f = x => { if (!(x >= xs[0] && x <= xs[xs.length - 1])) return NaN; let lo = 0, hi = xs.length - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (xs[m] <= x) lo = m; else hi = m; } const u = xs[hi] === xs[lo] ? 0 : (x - xs[lo]) / (xs[hi] - xs[lo]); return ys[lo] + (ys[hi] - ys[lo]) * u; };
+    const f = dataFn(o.d.xs, o.d.ys, !!o.d.smooth);
     return { v: NaN, u: 'none', f, isFn: true };
   }
   if (o.k === 'deriv' && o.d.numeric) { const base = Gx[o.p[0]]; if (!base || !base.f) return null; const h = 1e-4; return { v: NaN, u: 'none', isFn: true, f: x => (base.f(x + h) - base.f(x - h)) / (2 * h) }; }
@@ -250,13 +249,14 @@ function drawCoord(co, o) {
   ctx.beginPath(); ctx.moveTo(O.x, 2); ctx.lineTo(O.x - 4, 11); ctx.lineTo(O.x + 4, 11); ctx.fill();
   if (sel.includes(o.id) || hoverId === o.id) { ctx.strokeStyle = sel.includes(o.id) ? THEME.sel : THEME.hover; ctx.globalAlpha = 0.5; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(0, O.y); ctx.lineTo(W, O.y); ctx.moveTo(O.x, 0); ctx.lineTo(O.x, H); ctx.stroke(); ctx.globalAlpha = 1; }
   if (o.d.ticks !== false) {
-    ctx.font = '11px "IBM Plex Sans KR", system-ui, sans-serif'; ctx.fillStyle = THEME.muted; ctx.strokeStyle = THEME.axis; ctx.lineWidth = 1;
+    ctx.font = tickFont(); ctx.fillStyle = THEME.muted; ctx.strokeStyle = THEME.axis; ctx.lineWidth = 1;
     const lab = v => String(+v.toFixed(6)).replace('-', '−'); const labX = v => trig ? piLabel(Math.round(v / (Math.PI / 2))) : lab(v);
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     for (let x = gx0; x <= gx1; x += sx) { if (Math.abs(x) < sx / 2) continue; const p = O.x + x * ux; ctx.beginPath(); ctx.moveTo(p, O.y - 3); ctx.lineTo(p, O.y + 3); ctx.stroke(); ctx.fillText(labX(x), p, clamp(O.y + 5, 2, H - 14)); }
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     for (let y = gy0; y <= gy1; y += sy) { if (Math.abs(y) < sy / 2) continue; const p = O.y - y * uy; ctx.beginPath(); ctx.moveTo(O.x - 3, p); ctx.lineTo(O.x + 3, p); ctx.stroke(); ctx.fillText(lab(y), clamp(O.x - 6, 22, W - 2), p); }
     ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillText('0', O.x - 5, O.y + 4);
+    if (o.d.xlabel || o.d.ylabel) { ctx.font = 'italic 600 15px ' + FAM.serif; ctx.fillStyle = THEME.ink; if (o.d.xlabel) { ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillText(o.d.xlabel, W - 6, clamp(O.y - 6, 18, H - 4)); } if (o.d.ylabel) { ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(o.d.ylabel, clamp(O.x + 8, 4, W - 40), 6); } }
   }
   ctx.restore();
 }

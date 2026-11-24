@@ -99,10 +99,10 @@ function calcDialog(o) {
     catch (e) { out.textContent = inp.value.trim() ? e.message : ' '; out.classList.toggle('err', !!inp.value.trim()); }
   };
   inp.addEventListener('input', preview);
-  const keys = ['7', '8', '9', '/', 'sin(', 'cos(', '4', '5', '6', '*', 'tan(', 'sqrt(', '1', '2', '3', '-', 'abs(', 'ln(', '0', '.', '^', '+', '(', ')', 'π', 'asin(', 'acos(', 'atan(', 'log(', 'exp('];
+  const keys = ['7', '8', '9', '/', 'sin(', 'cos(', '4', '5', '6', '*', 'tan(', 'sqrt(', '1', '2', '3', '-', 'abs(', 'ln(', '0', '.', '^', '+', '(', ')', 'π', 'asin(', 'acos(', 'atan(', 'log(', 'exp(', 'cm', 'in', '°', 'rad', 'sgn(', 'round('];
   const pad = el('div', { class: 'keypad' }, keys.map(k => el('button', { type: 'button', onclick: () => insertAt(inp, k) }, k.replace('*', '×').replace('/', '÷').replace('sqrt(', '√('))));
   const body = el('div', { class: 'stack' }, inp, out, pad, el('div', { class: 'sub' }, '값 넣기 — 스케치의 값을 클릭해도 들어갑니다'), valueChips(v => insertAt(inp, v.label + (v.t === 'fplot' ? '(' : '')), o && o.id),
-    el('p', { class: 'note' }, '삼각함수는 환경설정의 각 단위(' + (doc.prefs.deg ? '도' : '라디안') + ')를 따릅니다.'));
+    el('p', { class: 'note' }, '삼각함수는 환경설정의 각 단위(' + (doc.prefs.deg ? '도' : '라디안') + ')를 따릅니다. cm·in·°·rad를 붙이면 단위가 있는 값이 되고, 결과에도 단위가 붙습니다 (예: 2cm + m1, 30°).'));
   calcInsertHook = v => insertAt(inp, v.label + (v.t === 'fplot' ? '(' : ''));
   openDlg(o ? '계산 편집' : '계산', body, [{ label: '취소' }, { label: o ? '확인' : '만들기', primary: true, run: () => {
     let r; try { r = userExprToStored(inp.value, false); } catch (e) { toast(e.message); return false; }
@@ -227,7 +227,8 @@ const MENUS = [
     { label: '새 문서…', run: newDocument },
     { label: '열기…', key: 'Ctrl+O', run: fileOpen },
     { label: '파일로 저장 (.json)', key: 'Ctrl+S', run: fileSave },
-    { label: '그림으로 내보내기 (.png)', key: 'Ctrl+E', run: exportPNG },
+    { label: '그림으로 내보내기 (.png)', key: 'Ctrl+E', run: exportPNGScaled },
+    { label: '벡터 그림으로 내보내기 (.svg)', run: exportSVG },
     { label: '그림 가져오기…', run: importPictureDlg },
     { label: '웹 페이지로 내보내기 (.html)', run: exportWebPage },
     ...(isStandalone() ? [{ label: '인쇄…', run: printSketch }] : []),
@@ -275,12 +276,15 @@ const MENUS = [
     { label: '속성…', run: () => propsDialog(), en: () => sel.length > 0 },
     { label: '환경설정…', run: prefsDlg },
     { label: '색·글자 환경설정…', run: colorPrefsDlg },
+    { label: '글자 스타일 환경설정…', run: textStylePrefsDlg },
+    { label: '도구 환경설정…', run: toolPrefsDlg },
+    { label: '고급 환경설정…', run: advPrefsDlg },
   ] },
   { name: '표시', items: [
     { label: '선 굵기', sub: () => [[1, '가늘게'], [2, '보통'], [3, '굵게']].map(([v, l]) => ({ label: l, run: () => setProp(o => o.w = v), en: () => sel.length > 0 })) },
     { label: '선 모양', sub: () => [[0, '실선'], [1, '파선'], [2, '점선']].map(([v, l]) => ({ label: l, run: () => setProp(o => o.dash = v), en: () => sel.length > 0 })) },
     { label: '점 크기', sub: () => [[1, '작게'], [2, '보통'], [3, '크게']].map(([v, l]) => ({ label: l, run: () => setProp(o => o.ps = v), en: () => S().pts.length > 0 })) },
-    { label: '색', sub: () => [...Object.keys(PALETTE).map(k => ({ label: PAL_KO[k], swatch: col(k), run: () => setProp(o => { o.color = k; delete o.pc; }), en: () => sel.length > 0 })), sep, { label: '다른 색…', run: () => otherColorDlg(), en: () => sel.length > 0 }, { label: '매개변수 색…', run: paramColorDlg, en: () => { const s = S(); const v = s.vals.filter(x => !isFnObj(x)).length; return (v === 1 || v === 3) && s.n > v; } }] },
+    { label: '색', sub: () => [...Object.keys(PALETTE).map(k => ({ label: PAL_KO[k], swatch: col(k), run: () => setProp(o => { o.color = k; delete o.pc; }), en: () => sel.length > 0 })), sep, { label: '다른 색…', run: () => otherColorDlg(), en: () => sel.length > 0 }, { label: '색 메뉴 편집…', run: paletteEditDlg }, { label: '매개변수 색…', run: paramColorDlg, en: () => { const s = S(); const v = s.vals.filter(x => !isFnObj(x)).length; return (v === 1 || v === 3) && s.n > v; } }] },
     { label: '텍스트 팔레트 보이기/숨기기', run: () => toggleTextPalette(), check: () => paletteOn },
     sep,
     { label: '레이블 보이기/숨기기', key: 'Ctrl+K', run: toggleLabels, en: () => sel.length > 0 },
@@ -374,7 +378,7 @@ const MENUS = [
     { label: '표 데이터 지우기', sub: () => [{ label: '마지막 행', run: () => removeTableData(S().os[0], false) }, { label: '모든 행', run: () => removeTableData(S().os[0], true) }].map(x => ({ ...x, en: () => S().n === 1 && S().os[0].t === 'table' && S().os[0].k !== 'iter' })) },
     sep,
     { label: '새 함수…', run: () => functionDialog(null, { plot: false }) },
-    { label: '그림에서 함수 정의', run: functionFromDrawing, en: () => S().n === 1 && S().os[0].t === 'drawing' },
+    { label: '그림에서 함수 정의', run: () => S().os[0].t === 'picture' ? functionFromPicture() : functionFromDrawing(), en: () => S().n === 1 && (S().os[0].t === 'drawing' || S().os[0].t === 'picture') },
     { label: '도함수 정의', run: () => { snap(); setSel(S().os.filter(o => o.t === 'value' && isFnObj(o)).map(mkDerivative)); }, en: () => { const s = S(); return s.n >= 1 && s.os.every(o => o.t === 'value' && isFnObj(o)); } },
   ] },
   { name: '그래프', items: [

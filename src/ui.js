@@ -130,7 +130,7 @@ function setTool(id, variant) {
   document.querySelectorAll('.tool').forEach(b => { b.setAttribute('aria-pressed', b.dataset.tool === id); });
   const t = TOOLS.find(t => t.id === id); const vb = $(`.tool[data-tool="${id}"]`);
   if (vb) vb.querySelector('.tico').innerHTML = svg(ICON[t.vars ? id + ':' + toolState.v[id] : id]);
-  const h = HINT[id]; $('#status-hint').textContent = typeof h === 'string' ? h : h[toolState.v[id]];
+  const h = HINT[id]; $('#status-hint').textContent = doc && doc.prefs.hints === false ? '' : typeof h === 'string' ? h : h[toolState.v[id]];
   cv.style.cursor = id === 'hand' ? 'grab' : id === 'arrow' ? 'default' : id === 'text' ? 'text' : 'crosshair';
   closeFlyout(); requestDraw();
   if (id === 'custom') { ctoolMatched = []; ctoolHint(); } else if (typeof ctoolMatched !== 'undefined') ctoolMatched = [];
@@ -261,6 +261,7 @@ function closePolygon() {
 let calcInsertHook = null;
 function arrowDown(sx, sy, e) {
   const h = hitTest(sx, sy); const now = performance.now();
+  { const ph = pictureHandleAt(sx, sy); if (ph) { snap(); drag = { mode: 'picres', id: ph.id, moved: false }; return; } const chd = captionHandleAt(sx, sy); if (chd) { snap(); drag = { mode: 'capres', id: chd.id }; return; } }
   if (!h) { const c = candidateAt(sx, sy); if (c.kind === 'int') { snap(); setSel([realize(c)]); return; } }
   if (!h) { if (!e.shiftKey) setSel([]); drag = { mode: 'marquee', sx, sy, x: sx, y: sy, base: e.shiftKey ? sel.slice() : [] }; return; }
   const o = obj(h.id);
@@ -286,6 +287,8 @@ function moveRoots(ids) {
 function dragMove(sx, sy, e) {
   const d = drag;
   if (d.mode === 'draw') { const w = toW(sx, sy), l = d.pts[d.pts.length - 1]; d.len += vdist(toS(l), { x: sx, y: sy }); if (vdist(toS(l), { x: sx, y: sy }) > 2) d.pts.push(w); overlay = c2 => { if (d.len < 6) return; c2.strokeStyle = THEME.ink; c2.lineWidth = 2; c2.lineJoin = 'round'; c2.beginPath(); d.pts.forEach((p, i) => { const q = toS(p); i ? c2.lineTo(q.x, q.y) : c2.moveTo(q.x, q.y); }); c2.stroke(); }; requestDraw(); return; }
+  if (d.mode === 'picres') { const o = obj(d.id), g = G[o.id], w = toW(sx, sy); o.d.ww = Math.max(0.2, w.x - g.TL.x); dirty = true; requestDraw(); return; }
+  if (d.mode === 'capres') { const o = obj(d.id); o.d.wrap = Math.max(40, sx - o._bb.x - 8); requestDraw(); return; }
   if (d.mode === 'pan') { view.ox = d.ox + sx - d.sx; view.oy = d.oy + sy - d.sy; dirty = true; requestDraw(); return; }
   if (d.mode === 'marquee') { d.x = sx; d.y = sy; marqueeSelect(d); return; }
   if (d.mode === 'label') { const o = obj(d.id); o.lo = { x: d.lo.x + sx - d.sx, y: d.lo.y + sy - d.sy }; d.moved = true; requestDraw(); return; }
@@ -330,6 +333,7 @@ function moveTo(d, sx, sy) {
 function dragEnd(sx, sy, e) {
   const d = drag; drag = null;
   if (d.mode === 'draw') { overlay = null; if (d.len < 6) markerClick(d.sx, d.sy); else { snap(); const o = add({ t: 'drawing', k: 'free', d: { pts: d.pts.map(p => ({ x: +p.x.toFixed(4), y: +p.y.toFixed(4) })) }, color: 'ink' }); setSel([o.id]); } requestDraw(); return; }
+  if (d.mode === 'picres' || d.mode === 'capres') { scheduleSave(); return; }
   if (d.mode === 'pan') { cv.style.cursor = toolState.id === 'hand' ? 'grab' : 'default'; scheduleSave(); return; }
   if (d.mode === 'marquee') { requestDraw(); updateStatus(); d.done = true; marqueeBox = null; requestDraw(); return; }
   if (d.mode === 'label') { if (!d.moved) { undoStack.pop(); const o = obj(d.id); if (!sel.includes(o.id)) setSel([...sel, o.id]); } scheduleSave(); return; }
@@ -363,6 +367,7 @@ function marqueeSelect(d) {
 }
 function afterDraw() {
   if (marqueeBox && drag && drag.mode === 'marquee') { const b = marqueeBox; ctx.save(); ctx.strokeStyle = THEME.sel; ctx.setLineDash([4, 3]); ctx.lineWidth = 1; ctx.strokeRect(b.x0 + 0.5, b.y0 + 0.5, b.x1 - b.x0, b.y1 - b.y0); ctx.fillStyle = rgba(THEME.sel, 0.07) || 'transparent'; ctx.fillRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0); ctx.restore(); }
+  drawPictureHandle(); drawCaptionHandle();
   if (iterHighlight != null && G[iterHighlight]) { const p = toS(G[iterHighlight]); ctx.save(); ctx.strokeStyle = THEME.hover; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(p.x, p.y, 11, 0, TAU); ctx.stroke(); ctx.restore(); }
   if (doc.marks.center != null && G[doc.marks.center]) { const p = toS(G[doc.marks.center]); ctx.save(); ctx.strokeStyle = THEME.sel; ctx.lineWidth = 1.2; ctx.setLineDash([2, 2]); ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, TAU); ctx.stroke(); ctx.restore(); }
 }
@@ -396,18 +401,21 @@ function overlayInput(x, y, value, multi, onDone, opts = {}) {
   ta.value = value; if (multi) ta.rows = Math.max(2, value.split('\n').length);
   host.append(ta);
   let done = false; const fin = ok => { if (done) return; done = true; const v = ta.value; ta.remove(); onDone(ok ? v : null); };
-  ta.addEventListener('keydown', ev => { ev.stopPropagation(); if (ev.key === 'Escape') fin(false); else if (ev.key === 'Enter' && (!multi || !ev.shiftKey)) { ev.preventDefault(); fin(true); } });
+  ta.addEventListener('keydown', ev => { ev.stopPropagation();
+    if ((ev.ctrlKey || ev.metaKey) && opts.style) { const k = ev.key.toLowerCase(); const st = opts.style; if (k === 'b' || k === 'i' || k === 'u') { ev.preventDefault(); const key = { b: 'bold', i: 'italic', u: 'underline' }[k]; st[key] = !st[key]; ta.style.fontWeight = st.bold ? 600 : 400; ta.style.fontStyle = st.italic ? 'italic' : 'normal'; ta.style.textDecoration = st.underline ? 'underline' : 'none'; toast({ bold: '굵게', italic: '기울임', underline: '밑줄' }[key] + (st[key] ? ' 켬' : ' 끔')); return; } if (ev.key === 'ArrowUp' || ev.key === 'ArrowDown') { ev.preventDefault(); insertAt(ta, ev.key === 'ArrowUp' ? '^{}' : '_{}'); ta.setSelectionRange(ta.selectionStart - 1, ta.selectionStart - 1); return; } if (ev.key === 'Enter') { ev.preventDefault(); fin(true); return; } }
+    if (ev.key === 'Escape') fin(false); else if (ev.key === 'Enter' && (!multi || !ev.shiftKey)) { ev.preventDefault(); fin(true); } });
   ta.addEventListener('pointerdown', ev => ev.stopPropagation());
   setTimeout(() => { ta.focus(); ta.select(); ta.addEventListener('blur', () => fin(true)); }, 60);
 }
 function inlineText(o, sx, sy) {
   const x = o ? o.d.sx : sx, y = o ? o.d.sy : sy;
+  const style = { bold: o ? !!o.d.bold : false, italic: o ? !!o.d.italic : false, underline: o ? !!o.d.underline : false };
   overlayInput(x, y, o ? textToEdit(o.d.text) : '', true, v => {
     if (v != null) v = textFromEdit(v);
     if (v == null) return; v = v.replace(/\s+$/, '');
-    if (!o) { if (!v) return; snap(); const t = add({ t: 'text', k: 'cap', d: { text: v, sx: x, sy: y, size: doc.prefs.capSize || 15, font: doc.prefs.capFont || 'sans' } }); setSel([t.id]); }
-    else { snap(); if (!v) deleteObjs([o.id]); else o.d.text = v; refresh(); }
-  }, { aria: '글상자 내용' });
+    if (!o) { if (!v) return; snap(); const t = add({ t: 'text', k: 'cap', d: { text: v, sx: x, sy: y, size: doc.prefs.capSize || 15, font: doc.prefs.capFont || 'sans', ...style } }); setSel([t.id]); }
+    else { snap(); if (!v) deleteObjs([o.id]); else { o.d.text = v; Object.assign(o.d, style); } refresh(); }
+  }, { aria: '글상자 내용', style });
 }
 function inlineRename(o) {
   const b = o._lb || { x: 100, y: 100 };
@@ -696,11 +704,7 @@ async function saveFile(filename, data, mime) {
 function stamp() { const d = new Date(), z = n => String(n).padStart(2, '0'); return d.getFullYear() + z(d.getMonth() + 1) + z(d.getDate()); }
 function fileSave() { saveFile('작도-' + stamp() + '.json', serializeBook(), 'application/json'); }
 function fileOpen() { const inp = el('input', { type: 'file', accept: '.json,application/json' }); inp.onchange = () => { const f = inp.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { try { const n = appendBook(parseBook(r.result)); toast('‘' + f.name + '’의 페이지 ' + n + '개를 열었습니다'); } catch (e) { toast('파일을 열 수 없습니다: ' + e.message); } }; r.readAsText(f); }; inp.click(); }
-function exportPNG() {
-  const s0 = sel; sel = []; const h0 = hoverId; hoverId = null; const ov = overlay; overlay = null; draw();
-  cv.toBlob(b => { saveFile((curPage() ? curPage().name : '작도') + '.png', b, 'image/png'); }, 'image/png');
-  sel = s0; hoverId = h0; overlay = ov; requestDraw();
-}
+function exportPNG() { if (doc.prefs.exportFormat === 'svg') return exportSVG(); exportPNGScaled(); }
 function archiveList() { try { return JSON.parse(localStorage.getItem('jakdo-archive') || '[]'); } catch (e) { return []; } }
 function archiveSet(a) { try { localStorage.setItem('jakdo-archive', JSON.stringify(a)); return true; } catch (e) { toast('브라우저 저장소를 사용할 수 없습니다'); return false; } }
 

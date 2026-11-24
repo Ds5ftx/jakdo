@@ -62,10 +62,10 @@ function textFont(o) {
   return `${o.d.italic ? 'italic ' : ''}${o.d.bold ? 600 : 400} {S} ${fam}`;
 }
 function drawRichText(o, selected, hover) {
-  const size = o.d.size || 15, font = textFont(o), lines = (o.d.text || '').split('\n'), pad = 4;
+  const size = o.d.size || 15, font = textFont(o), lines = o.d.wrap ? wrapText(o.d.text || '', o.d.wrap, size, font) : (o.d.text || '').split('\n'), pad = 4;
   ctx.save(); ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
   const Ls = lines.map(l => layoutRich(parseRich(l), size, font));
-  const w = Math.max(10, ...Ls.map(L => L.w)) + pad * 2; let h = pad * 2; const ys = [];
+  const w = Math.max(10, o.d.wrap || 0, ...Ls.map(L => L.w)) + pad * 2; let h = pad * 2; const ys = [];
   for (const L of Ls) { h += L.asc; ys.push(h); h += L.desc + size * 0.25; }
   textPos(o); const x = o.d.sx, y = o.d.sy; o._bb = { x, y, w, h };
   if (o.hidden) ctx.globalAlpha = 0.35;
@@ -85,7 +85,7 @@ function toggleTextPalette(force) {
   if (!paletteOn) { if (pal) pal.remove(); return; }
   if (pal) return;
   const targets = () => S().os.filter(o => o.t === 'text' || o.t === 'value' || o.t === 'button');
-  const apply = f => { const t = targets(); if (!t.length) return toast('글상자나 값을 선택하세요'); snap(); t.forEach(f); refresh(); };
+  const apply = f => { const all = S().os; if (!all.length) return toast('글상자·값·레이블이 있는 객체를 선택하세요'); snap(); all.forEach(o => { if (o.t === 'text' || o.t === 'value' || o.t === 'button' || o.t === 'table') f(o); else { o.lf = o.lf || {}; const proxy = { d: o.lf, color: o.color }; f(proxy); o.lf = proxy.d; } }); refresh(); };
   const ins = s => { const a = document.activeElement; if (a && a.classList && a.classList.contains('inline-edit')) { insertAt(a, s); return; } toast('글상자를 편집하는 중에 누르면 커서 위치에 들어갑니다'); };
   const sym = ['\\overline{AB}', '\\arc{AB}', 'π', 'θ', '°', '±', '×', '÷', '≤', '≥', '≠', '≈', '∠', '△', '⊥', '∥', '≅', '∽', '∞', '√{ }', 'x^{2}', 'a_{n}', '\\frac{a}{b}'];
   pal = el('div', { id: 'txtpal', role: 'toolbar', 'aria-label': '텍스트 팔레트' },
@@ -150,9 +150,22 @@ function propsExtra(list, one, body) {
   }
   if (one && one.t === 'locus') {
     body.append(el('div', { class: 'row2' }, field('표본 수', num('px-n', one.d.n || (obj(one.p[one.p.length === 3 ? 2 : 1]) && obj(one.p[one.p.length === 3 ? 2 : 1]).t === 'point' ? 300 : 70), 1)), el('label', { class: 'chk', style: 'align-self:end' }, el('input', { type: 'checkbox', id: 'px-dc', checked: !!one.d.disc }), '점으로만 (불연속)')));
-    fns.push(() => { one.d.n = clamp(Math.round(getNum('px-n') || 100), 3, 5000); one.d.disc = $('#px-dc').checked; });
+    const dm = one.d.dom || [0, 1]; body.append(el('div', { class: 'row2' }, field('구동 범위 시작 (0~1)', el('input', { id: 'px-d0', type: 'number', step: 0.05, min: 0, max: 1, value: dm[0] })), field('구동 범위 끝 (0~1)', el('input', { id: 'px-d1', type: 'number', step: 0.05, min: 0, max: 1, value: dm[1] }))), el('p', { class: 'note' }, '구동하는 점이 경로의 어느 부분을 지나는 동안만 자취를 그릴지 정합니다 (0 = 처음, 1 = 끝).'));
+    fns.push(() => { one.d.n = clamp(Math.round(getNum('px-n') || 100), 3, 5000); one.d.disc = $('#px-dc').checked; const a = clamp(+$('#px-d0').value || 0, 0, 1), b = clamp($('#px-d1').value === '' ? 1 : +$('#px-d1').value, 0, 1); if (a === 0 && b === 1) delete one.d.dom; else one.d.dom = [Math.min(a, b), Math.max(a, b)]; });
   }
-  if (one && one.t === 'amark') { body.append(field('각 표시 크기 (px)', num('px-ar', one.d.r || 20, 1))); fns.push(() => { one.d.r = clamp(getNum('px-ar') || 20, 8, 80); }); }
+  if (one && one.t === 'amark') { body.append(el('div', { class: 'row2' }, field('각 표시 크기 (px)', num('px-ar', one.d.r || 20, 1)), el('label', { class: 'chk', style: 'align-self:end' }, el('input', { type: 'checkbox', id: 'px-dir', checked: !!one.d.dir }), '방향 화살표 (방향각 표시)'))); fns.push(() => { one.d.r = clamp(getNum('px-ar') || 20, 8, 80); one.d.dir = $('#px-dir').checked; }); }
+  if (one && one.label && !isScreenObj(one) && one.t !== 'coord') {
+    const lf = one.lf || {}; const cur = lf.italic == null ? '' : ((lf.italic ? 'i' : '') + (lf.bold ? 'b' : '') || 'n');
+    body.append(el('div', { class: 'row3' }, field('레이블 크기', el('input', { id: 'px-lsz', type: 'number', value: lf.size || '', placeholder: String(doc.prefs.labelSize || 16) })), field('레이블 글꼴', el('select', { id: 'px-lfn' }, [['', '환경설정 따름'], ['serif', '명조·수식'], ['sans', '고딕'], ['mono', '고정폭']].map(([v, l]) => el('option', { value: v, selected: (lf.font || '') === v }, l)))), field('레이블 모양', el('select', { id: 'px-lst' }, [['', '환경설정 따름'], ['ib', '기울임 굵게'], ['i', '기울임'], ['b', '굵게'], ['n', '보통']].map(([v, l]) => el('option', { value: v, selected: v === cur }, l))))));
+    fns.push(() => { const n = {}; const sz = +$('#px-lsz').value; if (sz) n.size = clamp(sz, 7, 72); if ($('#px-lfn').value) n.font = $('#px-lfn').value; const st = $('#px-lst').value; if (st) { n.italic = st.includes('i'); n.bold = st.includes('b'); } if (Object.keys(n).length) one.lf = n; else delete one.lf; });
+  }
+  if (one && one.t === 'coord') {
+    body.append(el('div', { class: 'row2' }, field('x축 이름', el('input', { id: 'px-xl', value: one.d.xlabel || '', placeholder: '예: x' })), field('y축 이름', el('input', { id: 'px-yl', value: one.d.ylabel || '', placeholder: '예: y' }))),
+      el('div', { class: 'row3' }, el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'px-ax', checked: one.d.axes !== false }), '축 보이기'), el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'px-tk', checked: one.d.ticks !== false }), '눈금 숫자'), el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'px-tg', checked: !!one.d.trig }), '삼각 축')));
+    fns.push(() => { one.d.xlabel = $('#px-xl').value.trim(); one.d.ylabel = $('#px-yl').value.trim(); one.d.axes = $('#px-ax').checked; one.d.ticks = $('#px-tk').checked; one.d.trig = $('#px-tg').checked; });
+  }
+  if (one && one.t === 'value' && one.k === 'data') { body.append(el('p', { class: 'note' }, '데이터 점 ' + one.d.xs.length + '개, 정의역 [' + fmt(one.d.xs[0]) + ', ' + fmt(one.d.xs[one.d.xs.length - 1]) + ']'), el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'px-sm', checked: !!one.d.smooth }), '부드럽게 잇기 (끄면 꺾은선)')); fns.push(() => { one.d.smooth = $('#px-sm').checked; }); }
+  if (one && one.t === 'picture') { body.append(field('불투명도', el('input', { id: 'px-pa', type: 'range', min: 0.05, max: 1, step: 0.05, value: one.alpha ?? 1 }))); fns.push(() => { one.alpha = +$('#px-pa').value; }); if (one.k === 'cxf') { body.append(field('표본 격자 (칸 수)', num('px-pn', one.d.n || 12, 1))); fns.push(() => { one.d.n = clamp(Math.round(getNum('px-pn') || 12), 2, 60); }); } }
   if (one && one.t === 'fplot') {
     body.append(el('label', { class: 'chk' }, el('input', { type: 'checkbox', id: 'px-fd', checked: !!one.d.disc }), '점으로만 (불연속)')); fns.push(() => { one.d.disc = $('#px-fd').checked; });
     const isP = one.k === 'param';
@@ -213,6 +226,7 @@ const MANUAL_MAP = [
   ['수', '새 매개변수, 계산, 표 만들기·데이터 추가(자동)·지우기, 새 함수, 도함수, 그림에서 함수 정의'],
   ['그래프', '좌표계 정의(점·단위 선분·원), 좌표계 표시(여러 좌표계), 격자(정사각·직사각·극, 선·점), 격자에 맞추기, 축 위에 값·(x, y)로 그리기, 점 그리기, 표 데이터 그리기, 함수 그래프(y=, x=, r=), 매개곡선'],
   ['객체 속성', '레이블, 색·불투명도, 표시 이름·자릿수, 자취·그래프 표본 수와 정의역, 반복 횟수·표시, 버튼 속도·방향, 앞/뒤로'],
-  ['웹에서 다르게 처리한 것', '인쇄·인쇄 미리보기·페이지 설정 → PNG·웹 페이지로 내보내기 / 도구 폴더 → 이 브라우저의 도구 폴더 / JavaSketchpad → 웹 페이지 내보내기 / 창 메뉴·LessonLink·명령줄 옵션은 웹 앱에 해당 없음'],
+  ['환경설정', '단위·각(방향 포함)·자릿수, 색·글자(기본 색·배경·색 메뉴 편집), 글자 스타일(레이블·측정값·글상자·표·눈금), 도구(기본 점·선·각 표시, 정보 풍선), 고급(내보내기 배율·투명 배경·SVG, 표본 수, 고해상도)'],
+  ['웹에서 다르게 처리한 것', '인쇄·인쇄 미리보기 → GitHub 등 독립 실행 페이지에서 브라우저 인쇄 / 도구 폴더 → 이 브라우저의 도구 폴더 / JavaSketchpad → 웹 페이지 내보내기 / 창 메뉴·LessonLink·명령줄 옵션은 웹 앱에 해당 없음'],
 ];
 function manualMapDlg() { openDlg('매뉴얼 기능 대응표', el('div', { class: 'stack help' }, el('table', {}, el('tbody', {}, MANUAL_MAP.map(([k, v]) => el('tr', {}, el('th', { style: 'font-family:var(--f-ui)' }, k), el('td', {}, v)))))), [{ label: '닫기', primary: true }]); }

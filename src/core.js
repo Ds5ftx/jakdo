@@ -35,6 +35,7 @@ function obj(id) { return byId.get(id); }
 
 function add(o) {
   o.id = doc.nid++; o.p = o.p || []; o.d = o.d || {};
+  if (o.w == null && o.ps == null && o.dash == null && typeof applyToolDefaults === 'function') applyToolDefaults(o);
   if (o.w == null) o.w = 2; if (o.dash == null) o.dash = 0; if (o.ps == null) o.ps = 2;
   if (o.color == null) o.color = defaultColor(o);
   doc.objs.push(o); byId.set(o.id, o); dirty = true; return o;
@@ -281,6 +282,7 @@ function tokenize(s) {
     if (c === '#') { let j = i + 1; while (/[0-9]/.test(s[j] || '')) j++; T.push({ k: 'r', v: +s.slice(i + 1, j) }); i = j; continue; }
     if (/[A-Za-z_πͰ-Ͽ]/.test(c)) { let j = i; while (j < s.length && /[A-Za-z_0-9₀-₉πͰ-Ͽ]/.test(s[j])) j++; T.push({ k: 'i', v: s.slice(i, j).replace(/[₀-₉]/g, d => SUBS.indexOf(d)) }); i = j; continue; }
     const ops = { '·': '*', '×': '*', '÷': '/', '−': '-' };
+    if (c === '°') { T.push({ k: 'i', v: '°' }); i++; continue; }
     if ('+-*/^(),|'.includes(c) || ops[c]) { T.push({ k: 'o', v: ops[c] || c }); i++; continue; }
     throw new Error('알 수 없는 문자: ' + c);
   }
@@ -309,6 +311,7 @@ function parseExpr(src, resolve) {
       const id = t.v;
       if (FN[id]) { if (!eat('(')) throw new Error(id + ' 다음에 ( 가 필요합니다'); const a = expr(); if (!eat(')')) throw new Error('괄호가 닫히지 않았습니다'); return ['f', id, a]; }
       if (id === 'pi' || id === 'π') return ['n', Math.PI];
+      if (typeof UNIT_TOK !== 'undefined' && UNIT_TOK.includes(id) && !doc.objs.some(o => o.label === id && o.t === 'value')) return ['u', id];
       if (id === 'e') return ['n', Math.E];
       const r = resolve(id); if (r == null) throw new Error('알 수 없는 이름: ' + id);
       if (r[0] === 'r' && isFnObj(obj(r[1]))) { if (!eat('(')) throw new Error(id + ' 다음에 ( 가 필요합니다'); const a = expr(); if (!eat(')')) throw new Error('괄호가 닫히지 않았습니다'); return ['call', r[1], a]; }
@@ -323,6 +326,7 @@ function evalAst(a, env) {
     case 'n': return a[1];
     case 'r': return env.ref(a[1]);
     case 'x': return env.x;
+    case 'u': return unitConst(a[1]);
     case '+': return evalAst(a[1], env) + evalAst(a[2], env);
     case '-': return evalAst(a[1], env) - evalAst(a[2], env);
     case '*': return evalAst(a[1], env) * evalAst(a[2], env);
@@ -452,7 +456,7 @@ const COMP = {
     return { co, f: x => { env.x = x; return evalAst(ast, env); }, xmin: o.d.xmin, xmax: o.d.xmax };
   },
   locus(o, Gx) { return o.k === 'cxf' ? computeCxfLocus(o, Gx) : computeLocus(o, Gx); },
-  iter(o, Gx) { return computeIter(o, Gx); }, picture(o, Gx) { return pictureFrame(o, Gx); }, drawing() { return {}; }, table() { return {}; }, tplot() { return {}; },
+  iter(o, Gx) { return computeIter(o, Gx); }, picture(o, Gx) { return o.k === 'cxf' ? computeCxfPicture(o, Gx) : pictureFrame(o, Gx); }, drawing() { return {}; }, table() { return {}; }, tplot() { return {}; },
   value(o, Gx) { return computeValue(o, Gx); },
   text() { return {}; }, button() { return {}; },
   amark(o, Gx) { const A = PG(o, Gx, 0), V = PG(o, Gx, 1), B = PG(o, Gx, 2); return A && V && B ? { A, V, B } : null; },
@@ -530,7 +534,7 @@ function computeValue(o, Gx) {
     case 'calc': {
       let ast; try { ast = compileStored(o, Gx, false); } catch (e) { return { v: NaN, u: 'none', err: e.message }; }
       const env = { trig: doc.prefs.deg ? D2R : 1, ref: id => valNum(id, Gx), call: (id, x) => { const g = Gx[id]; return g ? g.f(x) : NaN; } };
-      r = N(evalAst(ast, env)); break;
+      { const val = evalAst(ast, env), un = calcUnit(ast); r = un === 'none' ? N(val) : { v: val, u: un, raw: fromDisplay(val, un) }; } break;
     }
   }
   if (!r) return null;
@@ -630,7 +634,7 @@ function computeLocus(o, Gx) {
   const chain = doc.objs.filter(x => x.id !== drv.id && down.has(x.id) && up.has(x.id) && x.t !== 'locus');
   if (!chain.length && tgt.id !== drv.id) return null;
   const Gt = Object.assign({}, Gx);
-  const [t0, t1, wrap] = rng;
+  let [t0, t1, wrap] = rng; if (o.d.dom) { const a = clamp(o.d.dom[0], 0, 1), b = clamp(o.d.dom[1], 0, 1); const s0 = t0, sp = t1 - t0; t0 = s0 + sp * a; t1 = s0 + sp * b; if (a !== 0 || b !== 1) wrap = false; }
   const pointTarget = tgt.t === 'point';
   const n = pointTarget ? (o.d.n || doc.prefs.locusN || 300) : (o.d.n || 70);
   const sampleAt = t => {
@@ -660,6 +664,7 @@ function computeLocus(o, Gx) {
     return { polys };
   }
   const items = [];
+  if (tgt.t === 'picture') { for (let i = 0; i <= n; i++) { const g = sampleAt(t0 + (t1 - t0) * i / n); if (g && g.TL) items.push({ TL: { ...g.TL }, TR: { ...g.TR }, BL: { ...g.BL } }); } return { kind: 'picture', items, src: Gx[tgt.id] && Gx[tgt.id].src }; }
   if (tgt.t === 'fplot') { for (let i = 0; i <= n; i++) { const g = sampleAt(t0 + (t1 - t0) * i / n); if (g) items.push({ pts: fplotSamples(g, 160).map(s => s.p) }); } return { kind: 'fplot', items }; }
   for (let i = 0; i <= n; i++) { const g = sampleAt(t0 + (t1 - t0) * i / n); if (g) items.push(JSON.parse(JSON.stringify(g))); }
   return { kind: tgt.t, items };
