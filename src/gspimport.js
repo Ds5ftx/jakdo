@@ -69,7 +69,7 @@ GSPI.parse = (ab) => {
     if (tag === 902) { sec = { type: dv.getUint16(p, true), name: '', objs: [] }; secs.push(sec); }
     else if (tag === 1300 && len > 8) pics.push(GSPI.picture(u8, p, len));
     else if (tag === 1100 && sec) { let e = p; while (e < p + len && u8[e]) e++; sec.name = GSPI.dec(u8.slice(p, e)); }
-    else if (tag === 1000 && sec && len >= 8) { sec.scroll = { x: dv.getInt16(p + 4, true), y: dv.getInt16(p + 6, true) }; }
+    else if (tag === 1000 && sec && len >= 8) { sec.scroll = { x: dv.getInt16(p + 4, true), y: dv.getInt16(p + 6, true) }; if (len >= 18) sec.angle = dv.getUint16(p + 16, true); }
     else if (tag === 2000 && sec) {
       const a = dv.getUint32(p, true);
       o = { code: a & 0xffff, fl: a >>> 16, k: dv.getUint16(p + 8, true), e: dv.getUint16(p + 10, true), rgb: [u8[p + 12], u8[p + 13], u8[p + 14]], par: [], rec: {} };
@@ -231,7 +231,7 @@ async function importGSPFile(file) {
   try {
     for (const sec of F.secs) {
       if (sec.type !== 1 && sec.type !== 2) continue;
-      doc = newDoc(); doc.prefs.autoLabel = false; reindex(); sel = [];
+      doc = newDoc(); doc.prefs.autoLabel = false; reindex(); sel = []; if (sec.angle === 0) doc.prefs.deg = false; else if (sec.angle >= 1) doc.prefs.deg = true;
       const L = []; skipped += GSPI.build(F, sec, L);
       doc.prefs.autoLabel = true;
       if (sec.type === 1) { pages.push({ name: sec.name || '페이지 ' + (pages.length + 1), doc, view: { ox: -(sec.scroll ? sec.scroll.x : 0), oy: -(sec.scroll ? sec.scroll.y : 0), s: PXCM } }); links.push(L); }

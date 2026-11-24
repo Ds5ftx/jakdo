@@ -82,6 +82,7 @@ GSPX.picBytes = (src, w, h) => { // 그림을 PNG 바이트로 (PNG가 아니면
     return { bytes, w, h };
   } catch (e) { return null; }
 };
+GSPX.rad = d => !d.prefs.deg || d.objs.some(x => x.t === 'fplot' || (x.t === 'value' && x.k === 'func')); // 함수 그래프가 있으면 라디안
 function buildGSP() {
   stashPage(); const keep = doc; const W = new GSPX.W(); let skipped = 0, fixed = 0;
   const head = GSPX.b64(GSPX_T.head); new DataView(head.buffer).setUint16(14, book.pages.length, true); new DataView(head.buffer).setUint16(16, 0, true); new DataView(head.buffer).setUint16(12 + 24, 1 + book.pages.length, true); // 구역 수(부록 1 + 페이지)
@@ -231,10 +232,10 @@ function buildGSP() {
         if (id != null) idx.set(o.id, id);
       }
       // 페이지 머리글
-      const p902 = GSPX.b64(GSPX_T.p902), p1000 = GSPX.b64(GSPX_T.p1000); new DataView(p1000.buffer).setUint32(8 + 24, recs.length, true); new DataView(p1000.buffer).setUint16(8 + 8, 0x4000 + pi * 0x0731 + 17, true); // 페이지마다 다른 값(링크 버튼이 페이지를 찾는 데 쓰임)
+      const p902 = GSPX.b64(GSPX_T.p902), p1000 = GSPX.b64(GSPX_T.p1000); new DataView(p1000.buffer).setUint32(8 + 24, recs.length, true); new DataView(p1000.buffer).setUint16(8 + 16, GSPX.rad(doc) ? 0 : 1, true); // 각 단위: 0 라디안, 1 도 new DataView(p1000.buffer).setUint16(8 + 8, 0x4000 + pi * 0x0731 + 17, true); // 페이지마다 다른 값(링크 버튼이 페이지를 찾는 데 쓰임)
       W.raw(p902); W.raw(p1000);
       const nm = GSPX.utf8(pg.name || ('페이지 ' + (pi + 1))); W.rec(1100, new GSPX.B().bytes(nm).u8(0).get());
-      const prest = GSPX.b64(GSPX_T.prest); const rad = !doc.prefs.deg || doc.objs.some(x => x.t === 'fplot' || (x.t === 'value' && x.k === 'func')); GSPX.setPref(prest, 2400, rad ? 1 : 2, 2); // 각 단위: 1 라디안, 2 도 W.raw(prest);
+      const prest = GSPX.b64(GSPX_T.prest); GSPX.setPref(prest, 10042, GSPX.rad(doc) ? 0 : 1); W.raw(prest);
       for (const r of recs) { W.rec(2000, r.h); for (const [t, u] of r.rs) W.rec(t, u); W.rec(2007, new Uint8Array(0)); }
       if (csFirst) W.rec(9005, new GSPX.B().u32(csFirst).get());
       W.rec(1001, new Uint8Array(0)); W.rec(903, new Uint8Array(0));

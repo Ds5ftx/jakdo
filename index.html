@@ -3716,7 +3716,7 @@ GSPI.parse = (ab) => {
     if (tag === 902) { sec = { type: dv.getUint16(p, true), name: '', objs: [] }; secs.push(sec); }
     else if (tag === 1300 && len > 8) pics.push(GSPI.picture(u8, p, len));
     else if (tag === 1100 && sec) { let e = p; while (e < p + len && u8[e]) e++; sec.name = GSPI.dec(u8.slice(p, e)); }
-    else if (tag === 1000 && sec && len >= 8) { sec.scroll = { x: dv.getInt16(p + 4, true), y: dv.getInt16(p + 6, true) }; }
+    else if (tag === 1000 && sec && len >= 8) { sec.scroll = { x: dv.getInt16(p + 4, true), y: dv.getInt16(p + 6, true) }; if (len >= 18) sec.angle = dv.getUint16(p + 16, true); }
     else if (tag === 2000 && sec) {
       const a = dv.getUint32(p, true);
       o = { code: a & 0xffff, fl: a >>> 16, k: dv.getUint16(p + 8, true), e: dv.getUint16(p + 10, true), rgb: [u8[p + 12], u8[p + 13], u8[p + 14]], par: [], rec: {} };
@@ -3878,7 +3878,7 @@ async function importGSPFile(file) {
   try {
     for (const sec of F.secs) {
       if (sec.type !== 1 && sec.type !== 2) continue;
-      doc = newDoc(); doc.prefs.autoLabel = false; reindex(); sel = [];
+      doc = newDoc(); doc.prefs.autoLabel = false; reindex(); sel = []; if (sec.angle === 0) doc.prefs.deg = false; else if (sec.angle >= 1) doc.prefs.deg = true;
       const L = []; skipped += GSPI.build(F, sec, L);
       doc.prefs.autoLabel = true;
       if (sec.type === 1) { pages.push({ name: sec.name || '페이지 ' + (pages.length + 1), doc, view: { ox: -(sec.scroll ? sec.scroll.x : 0), oy: -(sec.scroll ? sec.scroll.y : 0), s: PXCM } }); links.push(L); }
@@ -4073,6 +4073,7 @@ GSPX.picBytes = (src, w, h) => { // 그림을 PNG 바이트로 (PNG가 아니면
     return { bytes, w, h };
   } catch (e) { return null; }
 };
+GSPX.rad = d => !d.prefs.deg || d.objs.some(x => x.t === 'fplot' || (x.t === 'value' && x.k === 'func')); // 함수 그래프가 있으면 라디안
 function buildGSP() {
   stashPage(); const keep = doc; const W = new GSPX.W(); let skipped = 0, fixed = 0;
   const head = GSPX.b64(GSPX_T.head); new DataView(head.buffer).setUint16(14, book.pages.length, true); new DataView(head.buffer).setUint16(16, 0, true); new DataView(head.buffer).setUint16(12 + 24, 1 + book.pages.length, true); // 구역 수(부록 1 + 페이지)
@@ -4222,10 +4223,10 @@ function buildGSP() {
         if (id != null) idx.set(o.id, id);
       }
       // 페이지 머리글
-      const p902 = GSPX.b64(GSPX_T.p902), p1000 = GSPX.b64(GSPX_T.p1000); new DataView(p1000.buffer).setUint32(8 + 24, recs.length, true); new DataView(p1000.buffer).setUint16(8 + 8, 0x4000 + pi * 0x0731 + 17, true); // 페이지마다 다른 값(링크 버튼이 페이지를 찾는 데 쓰임)
+      const p902 = GSPX.b64(GSPX_T.p902), p1000 = GSPX.b64(GSPX_T.p1000); new DataView(p1000.buffer).setUint32(8 + 24, recs.length, true); new DataView(p1000.buffer).setUint16(8 + 16, GSPX.rad(doc) ? 0 : 1, true); // 각 단위: 0 라디안, 1 도 new DataView(p1000.buffer).setUint16(8 + 8, 0x4000 + pi * 0x0731 + 17, true); // 페이지마다 다른 값(링크 버튼이 페이지를 찾는 데 쓰임)
       W.raw(p902); W.raw(p1000);
       const nm = GSPX.utf8(pg.name || ('페이지 ' + (pi + 1))); W.rec(1100, new GSPX.B().bytes(nm).u8(0).get());
-      const prest = GSPX.b64(GSPX_T.prest); const rad = !doc.prefs.deg || doc.objs.some(x => x.t === 'fplot' || (x.t === 'value' && x.k === 'func')); GSPX.setPref(prest, 2400, rad ? 1 : 2, 2); // 각 단위: 1 라디안, 2 도 W.raw(prest);
+      const prest = GSPX.b64(GSPX_T.prest); GSPX.setPref(prest, 10042, GSPX.rad(doc) ? 0 : 1); W.raw(prest);
       for (const r of recs) { W.rec(2000, r.h); for (const [t, u] of r.rs) W.rec(t, u); W.rec(2007, new Uint8Array(0)); }
       if (csFirst) W.rec(9005, new GSPX.B().u32(csFirst).get());
       W.rec(1001, new Uint8Array(0)); W.rec(903, new Uint8Array(0));
