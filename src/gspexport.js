@@ -52,6 +52,7 @@ GSPX.tokens = (expr) => {
 };
 /* 측정값·계산이 공통으로 쓰는 32바이트 표시 머리 */
 GSPX.disp = (sx, sy, mode = 0) => new GSPX.B().hex('fc080000').u32(0x16).u32(4).i16(sx).i16(sy).hex('03003c303e0000000600').u16(mode).hex('0200').u16(0);
+GSPX.valLabel = name => { const u = GSPX.utf8(GSPX.glabel(String(name).trim())); const b = new GSPX.B().u16(7).u16(0).u16(1).i16(8).i16(5).u16(0).u16(0).hex('986e12c1515c6141').u16(u.length).bytes(u).u8(0); if (b.a.length % 2) b.u8(0); return b.get(); };
 GSPX.glabel = s => String(s).replace(/[₀-₉]+/g, m => '[' + [...m].map(c => c.charCodeAt(0) - 0x2080).join('') + ']').replace(/′/g, "'").replace(/″/g, "''");
 GSPX.rect = o => { const x = o.d.sx || 10, y = o.d.sy || 10; return new GSPX.B().i16(x).i16(y).i16(x + 120).i16(y + 24).get(); };
 GSPX.label = (o, type = 7) => {
@@ -139,11 +140,11 @@ function buildGSP() {
       const P1 = id => idx.get(id);
       const lab = (o, rs) => { const l = o.k === 'xf' || (o.t !== 'point' && !o.showLabel) ? null : GSPX.label(o); if (l) { const at = rs.length && rs[0][0] === 2201 ? 0 : rs.length; rs.splice(at, 0, [2005, l], [2008, Uint8Array.of(0, 0)]); } return rs; }; // 순서: 2002, 종류별 자료, 2005·2008 (단, 자유점은 2005·2008 뒤에 2201)
       const freePt = (o, x, y, opt = {}) => { const [px, py] = PX(x, y); return emit(0, 1, opt.k || 4, [], o, lab(o, [[2201, new GSPX.B().f64(px).f64(py).get()]]), { e: 0x221 }); };
-      const valRec = (o) => [[2307, new GSPX.B().bytes(GSPX.disp(o.d.sx || 10, o.d.sy || 10).get()).get()], [2008, Uint8Array.of(1, 0)]];
+      const valRec = (o) => o.d.name ? [[2307, GSPX.disp(o.d.sx || 10, o.d.sy || 10, 3).get()], [2005, GSPX.valLabel(o.d.name)], [2008, Uint8Array.of(1, 0)]] : [[2307, GSPX.disp(o.d.sx || 10, o.d.sy || 10).get()], [2008, Uint8Array.of(1, 0)]]; // 이름 있는 측정값: 표시 방식 3 + 이름표(아래 첨자는 [n])
       const exprRec = (o, toks, kind) => { // kind: calc | func | param
         const b = new GSPX.B().bytes(GSPX.disp(o.d.sx || 10, o.d.sy || 10, kind === 'param' ? 3 : 0).get()).hex('07090000').u32(60 + 2 * toks.length).u32(0x30).u16(toks.length);
         if (kind === 'calc') b.u16(4).u16(0).u16(1).zeros(8).u32(4).zeros(28);
-        else if (kind === 'func') b.u16(0).u16(8).u16(0).zeros(8).u32(4).zeros(28);
+        else if (kind === 'func') b.u16(o.d.form === 'xy' ? 1 : 0).u16(8).u16(0).zeros(8).u32(4).zeros(28); // 1: x = f(y)
         else { const v = +o.d.v || 0; b.u16(4).u16(10).u16(3).f64(o.d.step || 0.01).f64(o.d.min ?? -100).f64(o.d.max ?? 100).f64(v).f64(v); }
         toks.forEach(t => b.u16(t)); return b.get();
       };
@@ -171,7 +172,7 @@ function buildGSP() {
             const u = (obj(U).d.u || 1) * PXCM;
             const ax = emit(58, 9, 38, [iO, iU], o, [[2309, new GSPX.B().u32(1).get()], [2005, GSPX.label({ label: 'x' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
             let iY;
-            if (Vy && obj(Vy)) iY = emit(55, 1, 40, [iU], null, [[2003, new GSPX.B().u32(55).f64((obj(Vy).d.u || 1) * PXCM).get()]], { e: 0x221, hidden: 1 });
+            if (Vy && obj(Vy)) { iY = emit(55, 1, 40, [iU], null, [[2003, new GSPX.B().u32(55).f64((obj(Vy).d.u || 1) * PXCM).get()]], { e: 0x221, hidden: obj(Vy).hidden ? 1 : 0 }); idx.set(Vy, iY); } // 세로 단위점도 다른 객체가 쓸 수 있게
             else iY = emit(54, 1, 40, [iU], null, [[2003, new GSPX.B().u32(54).f64(u).get()]], { e: 0x221, fl: 4 });
             const ay = emit(58, 9, 38, [iO, iY], o, [[2309, new GSPX.B().u32(0).get()], [2005, GSPX.label({ label: 'y' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
             id = emit(61, 8, 39, [ax, ay], { color: '#c0c0c0', hidden: o.hidden || o.d.grid === false }, [[2308, new GSPX.B().u32(1).u32(0).get()]], { e: 0x120 });
@@ -249,15 +250,15 @@ function buildGSP() {
             id = emit(35, 6, 42, [P1(trc), P1(path.id), P1(drv), ...ordered], o, [[2306, new GSPX.B().f64(dom[0]).f64(dom[1]).u32(o.d.n || 500).u16(4).u32(0).zeros(6).u16(1).zeros(6).get()]]);
             }
           } else if (id == null && o.t === 'fplot' && o.k === 'fn') {
-            const fn = obj(o.d.fn || o.p[1]); if (!fn || (fn.d.form && fn.d.form !== 'yx')) throw 0;
-            id = emit(72, 6, 58, [P1(fn.id), P1(o.p[0])], o, [[2306, new GSPX.B().f64(o.d.xmin ?? -10).f64(o.d.xmax ?? 10).u32(o.d.n || 750).u16(0).u32(3).zeros(6).u16(1).zeros(6).get()]]);
+            const fn = obj(o.d.fn || o.p[1]); if (!fn || (fn.d.form && fn.d.form !== 'yx' && fn.d.form !== 'xy')) throw 0;
+            id = emit(72, 6, 58, [P1(fn.id), P1(o.p[0])], o, [[2306, new GSPX.B().f64(o.d.xmin ?? -10).f64(o.d.xmax ?? 10).u32(o.d.n || 750).u16(fn.d.form === 'xy' ? 1 : 0).u32(3).zeros(6).u16(1).zeros(6).get()]]);
           } else if (id == null && o.t === 'value') {
             const M = { ratio3: [47, 51], len: [36, 48], dist: [37, 48], angle: [41, 49], area: [42, 50], arclen: [44, 48], radius: [46, 48], x: [65, 51], y: [66, 51], slope: [87, 51], ptval: [94, 51] }[o.k];
             if (M) { let p = par; if (o.k === 'ptval') { const pt = obj(o.p[0]); if (!pt || pt.k !== 'on') throw 0; p = [P1(pt.id), P1(pt.p[0])]; } if ((o.k === 'x' || o.k === 'y' || o.k === 'slope') && p.length === 1) { const cs = doc.coordId && P1(doc.coordId); if (!cs) throw 0; p = [p[0], cs]; } id = emit(M[0], 7, M[1], p, o, valRec(o)); }
             else if (o.k === 'coords') { let p = par.slice(0, 2); if (p.length === 1) { const cs = doc.coordId && P1(doc.coordId); if (!cs) throw 0; p = [p[0], cs]; } let txt = ''; try { txt = valueText(o); } catch (e) { } id = emit(49, 0, 34, p, o, [[2300, GSPX.capRec(GSPX.markup(txt || '( , )'), o.d.sx || 10, o.d.sy || 10)], [2008, Uint8Array.of(0, 0)]]); }
             else if (o.k === 'eq') { const L = obj(o.p[0]); const code = L && isStraight(L) ? 50 : L && L.t === 'circle' ? 51 : 0; if (!code) throw 0; let p = par.slice(0, 2); if (p.length === 1) { const cs = doc.coordId && P1(doc.coordId); if (!cs) throw 0; p = [p[0], cs]; } let txt = ''; try { txt = valueText(o); } catch (e) { } id = emit(code, 0, code === 50 ? 36 : 37, p, o, [[2300, GSPX.capRec(GSPX.markup(txt || 'y = '), o.d.sx || 10, o.d.sy || 10)], [2008, Uint8Array.of(0, 0)]]); }
             else if (o.k === 'calc') { const T = GSPX.tokens(o.d.expr); id = emit(48, 11, 51, T.refs.map(P1), o, [[2311, exprRec(o, T.toks, 'calc')], [2008, Uint8Array.of(1, 0)]]); }
-            else if (o.k === 'func' && (!o.d.form || o.d.form === 'yx')) { const T = GSPX.tokens(o.d.expr); const l = GSPX.label({ label: o.label || 'f', showLabel: false }, 6); id = T.refs.length ? emit(71, 11, 57, T.refs.map(P1), o, [[2311, exprRec(o, T.toks, 'func')], [2005, l], [2008, Uint8Array.of(0, 0)]]) : emit(0, 11, 57, [], o, [[2311, exprRec(o, T.toks, 'func')], [2005, l], [2008, Uint8Array.of(1, 0)], [2211, GSPX.rect(o)]]); }
+            else if (o.k === 'func' && (!o.d.form || o.d.form === 'yx' || o.d.form === 'xy')) { const T = GSPX.tokens(o.d.expr); const l = GSPX.label({ label: o.label || 'f', showLabel: false }, 6); id = T.refs.length ? emit(71, 11, 57, T.refs.map(P1), o, [[2311, exprRec(o, T.toks, 'func')], [2005, l], [2008, Uint8Array.of(0, 0)]]) : emit(0, 11, 57, [], o, [[2311, exprRec(o, T.toks, 'func')], [2005, l], [2008, Uint8Array.of(1, 0)], [2211, GSPX.rect(o)]]); }
             else if (o.k === 'param') { const T = GSPX.tokens(String(+(+o.d.v).toFixed(6))); const l = GSPX.label({ label: o.label || 't', showLabel: false }, 6); id = emit(0, 11, 79, [], o, [[2311, exprRec(o, T.toks.length ? T.toks : [0], 'param')], [2005, l], [2008, Uint8Array.of(1, 0)], [2211, GSPX.rect(o)]]); }
             else throw 0;
           } else if (id == null && o.t === 'picture') {

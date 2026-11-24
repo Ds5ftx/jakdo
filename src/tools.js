@@ -22,10 +22,10 @@ function buildTool(name) {
   const results = S0.filter(id => !givens.includes(id));
   if (!results.length) return { err: '결과가 될 객체(주어진 것에 의존하는 객체)도 함께 선택하세요' };
   // 결과에서 위로 올라가며 필요한 객체 모으기 (주어진 것에서 멈춤)
-  const need = new Set(); const st = [...results]; const auto = [];
+  const need = new Set(); const st = [...results]; const auto = []; // 선택에 들어 있는 좌표계는 도구가 직접 만든다 (주어진 것으로 돌리지 않음)
   while (st.length) {
     const id = st.pop(); if (need.has(id) || givens.includes(id)) continue; const o = obj(id); if (!o) continue;
-    if (o.t === 'coord' || (o.t === 'point' && (o.isOrigin || o.k === 'unit') && doc.objs.some(c => c.t === 'coord' && c.p.includes(id)))) { const cid = o.t === 'coord' ? id : doc.objs.find(c => c.t === 'coord' && c.p.includes(id)).id; if (!givens.includes(cid)) { givens.push(cid); auto.push(cid); } continue; }
+    if ((o.t === 'coord' && !set.has(id)) || (o.t === 'point' && (o.isOrigin || o.k === 'unit') && !set.has(id) && doc.objs.some(c => c.t === 'coord' && c.p.includes(id) && !set.has(c.id)))) { const cid = o.t === 'coord' ? id : doc.objs.find(c => c.t === 'coord' && c.p.includes(id)).id; if (!givens.includes(cid)) { givens.push(cid); auto.push(cid); } continue; }
     if (!o.p.length && !isScreenObj(o) && o.t !== 'value' && o.t !== 'drawing' && o.t !== 'picture') { givens.push(id); auto.push(id); continue; }
     need.add(id); for (const p of o.p) st.push(p);
     if (o.d && o.d.fn != null) st.push(o.d.fn);
@@ -45,7 +45,7 @@ function toolStepper(tool, matched) {
   const next = () => {
     while (k < tool.objs.length) {
       const c = tool.objs[k++]; const o = cloneObj(c); const old = o.id; delete o.id; remapRefs(o, id => map.get(id) ?? id);
-      if (o.t === 'coord') continue;
+      if (o.t === 'coord' && !o.p.length) continue; // 자리표시 좌표계(주어진 것)는 만들지 않음; 도구가 직접 만드는 좌표계는 만든다
       if (isScreenObj(o)) { const pos = nextScreenPos(); o.d.sx = pos.sx; o.d.sy = pos.sy; }
       const shown = tool.shown.includes(old); o.hidden = !shown || !!c.hidden; if (o.hidden) hiddenOrig.push(o);
       const keep = (tool.labelMode ? tool.labelMode === 'keep' : tool.keepLabels) && o.label && !doc.objs.some(x => x.label === o.label); const lab0 = o.label;

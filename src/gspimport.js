@@ -107,10 +107,14 @@ GSPI.build = (F, sec, links) => {
     if (isInterior(o)) o.alpha = 0.45;
   };
   const pos = (src, tag) => { const r = src.rec[tag]; return r && r.len >= 16 ? { sx: dv.getInt16(r.p + 12, true), sy: dv.getInt16(r.p + 14, true) } : null; };
-  const toks = (src) => { const r = src.rec[2311]; if (!r || r.len < 46) return null; const n = dv.getUint16(r.p + 44, true); const t = []; for (let i = 0; i < n; i++) t.push(dv.getUint16(r.p + r.len - 2 * n + 2 * i, true)); return { t, r, n }; };
+  const toks = (src) => { const r = src.rec[2311]; if (!r || r.len < 46) return null; const n = dv.getUint16(r.p + 44, true); const t = []; for (let i = 0; i < n; i++) t.push(dv.getUint16(r.p + r.len - 2 * n + 2 * i, true)); return { t, r, n, form: r.len > 48 && dv.getUint16(r.p + 46, true) === 1 ? 'xy' : 'yx' }; }; // 46: 1 이면 x = f(y)
   const fin = (src, id, opts = {}) => { const o = obj(id); if (!o) return null; if (!opts.noStyle) style(src, o); label(src, o); return id; };
   const text = (src, s, sx, sy, extra = {}) => add({ t: 'text', k: 'cap', d: { text: s, sx, sy, size: 14, ...extra }, color: GSPI.color(...src.rgb) }).id;
-  const valAt = (src, k, p, extra = {}) => { const id = mkValue(k, p, extra); const q = pos(src, 2307) || pos(src, 2311); if (q) Object.assign(obj(id).d, q); return id; };
+  const valAt = (src, k, p, extra = {}) => { const id = mkValue(k, p, extra); const q = pos(src, 2307) || pos(src, 2311); if (q) Object.assign(obj(id).d, q);
+    const r = src.rec[2307] || src.rec[2311]; // 표시 이름: 표시 문자열이 '<0>'(자동)이 아니면 그 글자가 측정값 이름
+    if (r && r.len >= 20 && k !== 'func' && k !== 'param') { const n = dv.getUint16(r.p + 16, true); if (n > 3 && 18 + n <= r.len) { try { const nm = GSPI.markup(u8, r.p + 18, r.p + 18 + n).trim(); if (nm) obj(id).d.name = nm; } catch (e) { } }
+      else if (n === 3 && r.len >= 28 && dv.getUint16(r.p + 26, true) === 3) { const l = src.rec[2005]; if (l && l.len >= 24) { const m = dv.getUint16(l.p + 22, true); const nm = GSPI.dec(u8.slice(l.p + 24, l.p + 24 + Math.min(m, l.len - 24))).replace(/\0.*$/, '').trim(); if (nm) obj(id).d.name = nm.replace(/\[(\d+)\]/g, (q, d) => [...d].map(c => String.fromCharCode(0x2080 + +c)).join('')); } } } // 방식 3: 이름표(2005)를 측정값 이름으로
+    return id; };
   sec.objs.forEach((s, i) => {
     let P = s.par.map(j => map[j]); let id = null;
     if (s.k === 23 || s.k === 59 || s.k === 19) P = P.filter(v => v != null && v !== -1);
@@ -129,10 +133,10 @@ GSPI.build = (F, sec, links) => {
             obj(id).hidden = !!(s.fl & 1); map[i] = id; return;
           }
           if (s.k === 4 || s.k === 41) { const r = s.rec[2201]; if (!r) break; const w = W(D(r, 0), D(r, 8)); id = P0(w); if (s.k === 41) { obj(id).isOrigin = true; pend.O = id; } break; }
-          if (s.k === 39) { id = ensureCoord(); map[i] = id; return; }
+          if (s.k === 39) { id = ensureCoord(); const c = obj(id); if (c) c.given = true; map[i] = id; return; } // 도구의 '좌표계' 주어진 것
           if (s.k === 19 || s.k === 59) { const r = s.rec[2300]; if (!r) break; const q = s.rec[2200]; const sx = q ? dv.getInt16(q.p, true) : dv.getInt16(r.p + 12, true), sy = q ? dv.getInt16(q.p + 2, true) : dv.getInt16(r.p + 14, true); id = text(s, GSPI.markup(u8, r.p + 18, r.p + r.len), sx, sy); obj(id).hidden = !!(s.fl & 1); if (q) { const w = dv.getInt16(q.p + 4, true) - sx; if (w > 60 && obj(id).d.text.length > 30) obj(id).d.wrap = w + 24; } break; }
           const T = toks(s); if (!T) break;
-          if (s.k === 57) { id = valAt(s, 'func', [], { expr: GSPI.expr(T.t, () => null), form: 'yx', notation: 'f' }); break; }
+          if (s.k === 57) { id = valAt(s, 'func', [], { expr: GSPI.expr(T.t, () => null), form: T.form, notation: 'f' }); break; }
           let v = D(T.r, T.r.len - 2 * T.n - 8); try { const e = GSPI.expr(T.t, () => null); if (/^[\d.\s+\-*/^()pie]+$/.test(e) && /\d|pi/.test(e)) { const x = Function('return (' + e.replace(/\^/g, '**').replace(/\bpi\b/g, 'Math.PI').replace(/\be\b/g, 'Math.E') + ')')(); if (isFinite(x)) v = x; } } catch (er) { } // 값은 식(토큰)이 기준
           id = valAt(s, 'param', [], { v: isFinite(v) ? v : 1, min: -10, max: 10, step: 0.1, unit: 'none' }); break;
         }
@@ -202,7 +206,7 @@ GSPI.build = (F, sec, links) => {
         case 28: id = mkXf(P[0], { type: 'rot', c: P[1], angP: [P[2], P[3], P[4]] }); break; // 세 점으로 표시한 각만큼 회전
         case 32: id = mkXf(P[0], { type: 'dil', c: P[1], rP: [P[2], P[3], P[4]] }); break; // 세 점으로 표시한 비율로 확대
         // 좌표계
-        case 52: { const r = s.rec[2003]; const o = add({ t: 'point', k: 'unit', p: [P[0]], d: { u: D(r, 4) / PXCM } }); giveLabel(o, false); o.ps = 1; id = o.id; pend.U = id; break; }
+        case 52: { const r = s.rec[2003]; if (P[0] != null) { pend.O = P[0]; pend.V = null; obj(P[0]).isOrigin = true; } const o = add({ t: 'point', k: 'unit', p: [P[0]], d: { u: D(r, 4) / PXCM } }); giveLabel(o, false); o.ps = 1; id = o.id; pend.U = id; break; }
         case 54: id = P[0]; break;
         case 55: { const r = s.rec[2003]; const O = obj(P[0]).p[0]; const o = add({ t: 'point', k: 'unit', p: [O], d: { u: D(r, 4) / PXCM, axis: 'y' } }); giveLabel(o, false); o.ps = 1; id = o.id; pend.V = id; break; }
         case 121: map[i] = null; return; // 슬라이더 눈금(장식)
@@ -238,7 +242,7 @@ GSPI.build = (F, sec, links) => {
         case 67: { const r = s.rec[2003]; const o = add({ t: 'point', k: 'plot', p: [P[0]], d: { x: D(r, 4), y: D(r, 12), polar: false } }); giveLabel(o, false); id = o.id; break; }
         case 48: case 71: case 78: {
           const T = toks(s); if (!T) break; const expr = GSPI.expr(T.t, n => P[n]);
-          const isF = s.code !== 48; id = valAt(s, isF ? 'func' : 'calc', [...new Set(P)], isF ? { expr, form: 'yx', notation: 'f' } : { expr });
+          const isF = s.code !== 48; id = valAt(s, isF ? 'func' : 'calc', [...new Set(P)], isF ? { expr, form: T.form, notation: 'f' } : { expr });
           break;
         }
         case 72: { const r = s.rec[2306]; const f = add({ t: 'fplot', k: 'fn', p: [P[1], P[0]], d: { fn: P[0], xmin: D(r, 0), xmax: D(r, 8) } }); f.label = obj(P[0]).label; id = f.id; break; }
@@ -293,7 +297,7 @@ async function importGSPFile(file) {
       doc.prefs.autoLabel = true;
       if (sec.type === 1) { pages.push({ name: sec.name || '페이지 ' + (pages.length + 1), doc, view: { ox: -(sec.scroll ? sec.scroll.x : 0), oy: -(sec.scroll ? sec.scroll.y : 0), s: PXCM } }); links.push(L); }
       else if (doc.objs.length) {
-        recompute(); const csPart = o => o.t === 'coord' || ((o.isOrigin || o.k === 'unit') && doc.objs.some(c => c.t === 'coord' && c.p.includes(o.id))); sel = doc.objs.filter(o => !['text', 'button'].includes(o.t) && !csPart(o)).map(o => o.id);
+        recompute(); const csPart = o => (o.t === 'coord' && o.given) || ((o.isOrigin || o.k === 'unit') && doc.objs.some(c => c.t === 'coord' && c.given && c.p.includes(o.id))); sel = doc.objs.filter(o => !['text', 'button'].includes(o.t) && !csPart(o)).map(o => o.id); // 주어진 좌표계의 부분만 뺀다 (도구가 직접 만드는 좌표계는 도구 객체)
         const t = buildTool(sec.name || '도구 ' + (tools.length + 1));
         if (!t.err && sec.givens && sec.map) { const ord = sec.givens.map(i => sec.map[i]); const at = g => { const k = ord.indexOf(g.id); return k < 0 ? 999 : k; }; t.givens.sort((a, b) => at(a) - at(b)); } // GSP 의 주어진 것 순서(1204)
         if (!t.err) { const vis = new Set(doc.objs.filter(o => !o.hidden).map(o => o.id)); t.shown = t.shown.filter(id => vis.has(id)); t.steps = t.objs.map(o => (vis.has(o.id) ? '' : '(숨김) ') + describe(obj(o.id))); tools.push(t); }

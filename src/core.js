@@ -555,7 +555,7 @@ function unitStr(u) {
   if (u === 'angle') return P.deg ? '°' : ' rad';
   return '';
 }
-function fmt(v, prec = doc.prefs.prec) { if (!isFinite(v)) return v === Infinity || v === -Infinity ? '∞' : '정의되지 않음'; const s = v.toFixed(prec); return s === '-0' || /^-0\.0*$/.test(s) ? s.slice(1) : s; }
+function fmt(v, prec = doc.prefs.prec) { if (!isFinite(v)) return v === Infinity ? '∞' : v === -Infinity ? '−∞' : '정의되지 않음'; const s = v.toFixed(prec); return s === '-0' || /^-0\.0*$/.test(s) ? s.slice(1) : s; }
 
 function valueName(o) {
   const p = o.p, n = i => nm(p[i]);
