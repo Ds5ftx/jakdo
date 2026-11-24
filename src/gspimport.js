@@ -19,7 +19,7 @@ GSPI.markup = (u8, start, end) => {
       if (t === 84) { // T
         let j = i + 2, h = ''; while (j < end && u8[j] !== 120) h += String.fromCharCode(u8[j++]);
         const n = parseInt(h, 16) || 0; for (let k = 0; k < n && j + 1 + k < end; k++) buf.push(u8[j + 1 + k]);
-        i = j + 1 + n; if (u8[i] === 62) i++; flush(); continue;
+        i = j + 1 + n; if (u8[i] === 62) i++; flush(); if (stack[stack.length - 1] === 'V') gap = true; continue;
       }
       let j = i + 1, tag = ''; while (j < end && u8[j] !== 60 && u8[j] !== 62) tag += String.fromCharCode(u8[j++]);
       if (tag === '0' && u8[j] === 62) { flush(); out = out.replace(/ +$/, '') + '\n'; i = j + 1; continue; }
@@ -32,7 +32,7 @@ GSPI.markup = (u8, start, end) => {
   flush(); return out.replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').trim();
 };
 /* 계산식 토큰(u16) → 저장 식 문자열 */
-GSPI.FNS = ['sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'abs', 'sqrt', 'ln', 'log', 'sgn', 'round', 'round', 'trunc'];
+GSPI.FNS = ['sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'abs', 'sqrt', 'ln', 'log', 'sgn', 'round', 'trunc'];
 GSPI.expr = (toks, ref) => {
   let s = '';
   for (const t of toks) {

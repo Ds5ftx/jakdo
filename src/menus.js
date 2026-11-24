@@ -227,6 +227,7 @@ const MENUS = [
     { label: '새 문서…', run: newDocument },
     { label: '열기… (.json · .gsp · .htm)', key: 'Ctrl+O', run: fileOpen },
     { label: '파일로 저장 (.json)', key: 'Ctrl+S', run: fileSave },
+    { label: 'GSP 5 문서로 저장 (.gsp)…', run: () => fileSaveGSP() },
     { label: '그림으로 내보내기 (.png)', key: 'Ctrl+E', run: exportPNGScaled },
     { label: '벡터 그림으로 내보내기 (.svg)', run: exportSVG },
     { label: '그림 가져오기…', run: importPictureDlg },
