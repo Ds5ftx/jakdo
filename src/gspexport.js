@@ -28,23 +28,28 @@ GSPX.CK = { point: [1, 4], segment: [2, 14], line: [2, 12], ray: [2, 13], circle
 GSPX.polyK = n => n >= 3 && n <= 6 ? 49 + n : 15;
 GSPX.FN = { sin: 0, cos: 1, tan: 2, asin: 3, acos: 4, atan: 5, abs: 6, sqrt: 7, ln: 8, log: 9, sgn: 10, round: 11, trunc: 12 };
 /* 저장 식(#id 참조) → GSP 토큰. 부모 목록(refs)을 함께 돌려준다 */
+GSPX.UNIT = { rad: 0x100, '°': 0x101, px: 0x200, cm: 0x201, in: 0x202 };
 GSPX.tokens = (expr) => {
   const refs = [], toks = []; const ri = id => { let i = refs.indexOf(id); if (i < 0) { refs.push(id); i = refs.length - 1; } return i; };
-  const re = /\s*(#\d+\s*\(|#\d+|\d+\.?\d*(?:e[+-]?\d+)?|\.\d+|[A-Za-z_]+\s*\(?|[()+\-*/^°])/gy; let m, s = String(expr).trim(), last = 0;
+  const ends = t => (t >> 12) === 6 || t === 12 || t === 13 || t === 14 || t === 15 || t <= 10 || (t >= 0x100 && t < 0x300); // 피연산자로 끝나는 토큰
+  const opnd = (...a) => { if (toks.length && ends(toks[toks.length - 1])) toks.push(0x1002); toks.push(...a); }; // 2π, 2(x+1) 같은 생략된 곱셈은 ×를 넣는다
+  const re = /\s*(#\d+\s*\(|#\d+|\d+\.?\d*(?:e[+-]?\d+)?|\.\d+|[A-Za-z_]+\s*\(?|[()+\-*/^°π·×÷])/gy; let m, s = String(expr).trim(), last = 0;
   re.lastIndex = 0;
   while (last < s.length && (m = re.exec(s))) {
     last = re.lastIndex; const t = m[1].replace(/\s+/g, '');
-    if (/^#\d+\($/.test(t)) toks.push(0x7000 + ri(+t.slice(1, -1)));
-    else if (/^#\d+$/.test(t)) toks.push(0x6000 + ri(+t.slice(1)));
-    else if (/^[\d.]/.test(t)) { if (/e/i.test(t)) throw new Error('num'); for (const ch of t) toks.push(ch === '.' ? 10 : +ch); }
-    else if (/^[A-Za-z_]+\($/.test(t)) { const f = t.slice(0, -1); if (!(f in GSPX.FN)) throw new Error('fn ' + f); toks.push(0x2000 + GSPX.FN[f]); }
-    else if (t === 'pi' || t === 'π') toks.push(13);
-    else if (t === 'e') toks.push(14);
-    else if (t === 'x') toks.push(15);
-    else if (t === '°') toks.push(0x101); // 도 단위
-    else if (t === '(') toks.push(11);
+    if (/^#\d+\($/.test(t)) opnd(0x7000 + ri(+t.slice(1, -1)));
+    else if (/^#\d+$/.test(t)) opnd(0x6000 + ri(+t.slice(1)));
+    else if (/^[\d.]/.test(t)) { if (/e/i.test(t)) throw new Error('num'); opnd(...[...t].map(ch => ch === '.' ? 10 : +ch)); }
+    else if (/^[A-Za-z_]+\($/.test(t)) { const f = t.slice(0, -1); if (!(f in GSPX.FN)) throw new Error('fn ' + f); opnd(0x2000 + GSPX.FN[f]); }
+    else if (t === 'pi' || t === 'π') opnd(13);
+    else if (t === 'e') opnd(14);
+    else if (t === 'x') opnd(15);
+    else if (Object.prototype.hasOwnProperty.call(GSPX.UNIT, t)) toks.push(GSPX.UNIT[t]); // 단위 (앞 수에 붙음)
+    else if (t === '(') opnd(11);
     else if (t === ')') toks.push(12);
-    else if (t === '-' && (!toks.length || (toks[toks.length - 1] >> 12) === 1 || (toks[toks.length - 1] >> 12) >= 2 && (toks[toks.length - 1] >> 12) !== 6 || toks[toks.length - 1] === 11)) toks.push(0x1005); // 단항 −
+    else if (t === '-' && (!toks.length || (toks[toks.length - 1] >> 12) === 1 || ((toks[toks.length - 1] >> 12) >= 2 && (toks[toks.length - 1] >> 12) !== 6) || toks[toks.length - 1] === 11)) toks.push(0x1005); // 단항 −
+    else if (t === '·' || t === '×') toks.push(0x1002);
+    else if (t === '÷') toks.push(0x1003);
     else if ('+-*/^'.includes(t) && t.length === 1) toks.push(0x1000 + '+-*/^'.indexOf(t));
     else throw new Error('tok ' + t);
   }
@@ -258,7 +263,7 @@ function buildGSP() {
             if (M) { let p = par; if (o.k === 'ptval') { const pt = obj(o.p[0]); if (!pt || pt.k !== 'on') throw 0; p = [P1(pt.id), P1(pt.p[0])]; } if ((o.k === 'x' || o.k === 'y' || o.k === 'slope') && p.length === 1) { const cs = doc.coordId && P1(doc.coordId); if (!cs) throw 0; p = [p[0], cs]; } id = emit(M[0], 7, M[1], p, o, valRec(o)); }
             else if (o.k === 'coords') { let p = par.slice(0, 2); if (p.length === 1) { const cs = doc.coordId && P1(doc.coordId); if (!cs) throw 0; p = [p[0], cs]; } let txt = ''; try { txt = valueText(o); } catch (e) { } id = emit(49, 0, 34, p, o, [[2300, GSPX.capRec(GSPX.markup(txt || '( , )'), o.d.sx || 10, o.d.sy || 10)], [2008, Uint8Array.of(0, 0)]]); }
             else if (o.k === 'eq') { const L = obj(o.p[0]); const code = L && isStraight(L) ? 50 : L && L.t === 'circle' ? 51 : 0; if (!code) throw 0; let p = par.slice(0, 2); if (p.length === 1) { const cs = doc.coordId && P1(doc.coordId); if (!cs) throw 0; p = [p[0], cs]; } let txt = ''; try { txt = valueText(o); } catch (e) { } id = emit(code, 0, code === 50 ? 36 : 37, p, o, [[2300, GSPX.capRec(GSPX.markup(txt || 'y = '), o.d.sx || 10, o.d.sy || 10)], [2008, Uint8Array.of(0, 0)]]); }
-            else if (o.k === 'calc') { const T = GSPX.tokens(o.d.expr); id = emit(48, 11, 51, T.refs.map(P1), o, [[2311, exprRec(o, T.toks, 'calc')], ...(o.d.name ? [[2005, GSPX.valLabel(o.d.name)]] : []), [2008, Uint8Array.of(1, 0)]]); } // 이름 있는 계산값: 방식 3 + 이름표
+            else if (o.k === 'calc') { const T = GSPX.tokens(o.d.expr); const uk = { dist: 48, angle: 49, area: 50 }[g && g.u] || 51; id = emit(T.refs.length ? 48 : 0, 11, uk, T.refs.map(P1), o, [[2311, exprRec(o, T.toks, 'calc')], ...(o.d.name ? [[2005, GSPX.valLabel(o.d.name)]] : []), ...(T.refs.length ? [[2008, Uint8Array.of(1, 0)]] : [[2008, Uint8Array.of(0, 0)], [2211, GSPX.rect(o)]])]); } // 이름 있는 계산값: 방식 3 + 이름표, 부모 없는 상수 식은 0번 객체(2211 위치 사각형 필요)
             else if (o.k === 'func' && (!o.d.form || o.d.form === 'yx' || o.d.form === 'xy')) { const T = GSPX.tokens(o.d.expr); const l = GSPX.label({ label: o.label || 'f', showLabel: false }, 6); id = T.refs.length ? emit(71, 11, 57, T.refs.map(P1), o, [[2311, exprRec(o, T.toks, 'func')], [2005, l], [2008, Uint8Array.of(0, 0)]]) : emit(0, 11, 57, [], o, [[2311, exprRec(o, T.toks, 'func')], [2005, l], [2008, Uint8Array.of(1, 0)], [2211, GSPX.rect(o)]]); }
             else if (o.k === 'param') { const T = GSPX.tokens(String(+(+o.d.v).toFixed(6))); const l = GSPX.label({ label: o.label || 't', showLabel: false }, 6); id = emit(0, 11, 79, [], o, [[2311, exprRec(o, T.toks.length ? T.toks : [0], 'param')], [2005, l], [2008, Uint8Array.of(1, 0)], [2211, GSPX.rect(o)]]); }
             else throw 0;

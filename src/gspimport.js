@@ -37,7 +37,7 @@ GSPI.expr = (toks, ref) => {
   let s = '';
   for (const t of toks) {
     const hi = t >> 12, lo = t & 0xfff;
-    if (hi === 0) { s += lo <= 9 ? String(lo) : lo === 10 ? '.' : lo === 11 ? '(' : lo === 12 ? ')' : lo === 13 ? ' pi ' : lo === 14 ? ' e ' : lo === 15 ? ' x ' : lo === 0x101 ? '°' : ''; } // 0x101: 앞 수의 단위가 도(°)
+    if (hi === 0) { s += lo <= 9 ? String(lo) : lo === 10 ? '.' : lo === 11 ? '(' : lo === 12 ? ')' : lo === 13 ? ' pi ' : lo === 14 ? ' e ' : lo === 15 ? ' x ' : (GSPI.UNIT[lo] || ''); } // 0x100~: 앞 수의 단위 (라디안·도·픽셀·cm·인치)
     else if (hi === 1) s += lo === 5 ? ' -' : ' ' + ('+-*/^'[lo] || '+') + ' '; // 5: 부호 바꾸기(단항 −)
     else if (hi === 2) s += ' ' + (GSPI.FNS[lo] || 'abs') + '(';
     else if (hi === 6) { const r = ref(lo); if (r == null) throw new Error('ref'); s += ' #' + r + ' '; }
@@ -137,6 +137,7 @@ GSPI.build = (F, sec, links) => {
           if (s.k === 19 || s.k === 59) { const r = s.rec[2300]; if (!r) break; const q = s.rec[2200]; const sx = q ? dv.getInt16(q.p, true) : dv.getInt16(r.p + 12, true), sy = q ? dv.getInt16(q.p + 2, true) : dv.getInt16(r.p + 14, true); id = text(s, GSPI.markup(u8, r.p + 18, r.p + r.len), sx, sy); obj(id).hidden = !!(s.fl & 1); if (q) { const w = dv.getInt16(q.p + 4, true) - sx; if (w > 60 && obj(id).d.text.length > 30) obj(id).d.wrap = w + 24; } break; }
           const T = toks(s); if (!T) break;
           if (s.k === 57) { id = valAt(s, 'func', [], { expr: GSPI.expr(T.t, () => null), form: T.form, notation: 'f' }); break; }
+          if (s.k !== 79) { id = valAt(s, 'calc', [], { expr: GSPI.expr(T.t, () => null) }); break; } // 부모 없는 계산값(상수 식): k 는 단위 종류(48 거리·49 각·50 넓이·51 없음)
           let v = D(T.r, T.r.len - 2 * T.n - 8); try { const e = GSPI.expr(T.t, () => null); if (/^[\d.\s+\-*/^()pie]+$/.test(e) && /\d|pi/.test(e)) { const x = Function('return (' + e.replace(/\^/g, '**').replace(/\bpi\b/g, 'Math.PI').replace(/\be\b/g, 'Math.E') + ')')(); if (isFinite(x)) v = x; } } catch (er) { } // 값은 식(토큰)이 기준
           id = valAt(s, 'param', [], { v: isFinite(v) ? v : 1, min: -10, max: 10, step: 0.1, unit: 'none' }); break;
         }
@@ -275,6 +276,7 @@ GSPI.build = (F, sec, links) => {
 };
 /* 교점 번호 보정: GSP에서 보이던 교점이 여기서 정의되지 않으면(호·선분 밖을 고른 경우) 다른 교점으로 바꿔 본다 */
 GSPI.AXIS_PX = 200;
+GSPI.UNIT = { 0x100: 'rad', 0x101: '°', 0x200: 'px', 0x201: 'cm', 0x202: 'in' }; // GSP 계산기 단위 토큰
 GSPI.fixInts = () => {
   recompute();
   for (const o of doc.objs) {
