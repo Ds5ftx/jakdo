@@ -703,7 +703,7 @@ async function saveFile(filename, data, mime) {
 }
 function stamp() { const d = new Date(), z = n => String(n).padStart(2, '0'); return d.getFullYear() + z(d.getMonth() + 1) + z(d.getDate()); }
 function fileSave() { saveFile('작도-' + stamp() + '.json', serializeBook(), 'application/json'); }
-function fileOpen() { const inp = el('input', { type: 'file', accept: '.json,application/json' }); inp.onchange = () => { const f = inp.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { try { const n = appendBook(parseBook(r.result)); toast('‘' + f.name + '’의 페이지 ' + n + '개를 열었습니다'); } catch (e) { toast('파일을 열 수 없습니다: ' + e.message); } }; r.readAsText(f); }; inp.click(); }
+function fileOpen() { const inp = el('input', { type: 'file', accept: '.json,.gsp,.htm,.html,application/json' }); inp.onchange = () => { const f = inp.files[0]; if (!f) return; if (!/\.json$/i.test(f.name) && typeof readDropped === 'function') return readDropped(f); const r = new FileReader(); r.onload = () => { try { const n = appendBook(parseBook(r.result)); toast('‘' + f.name + '’의 페이지 ' + n + '개를 열었습니다'); } catch (e) { toast('파일을 열 수 없습니다: ' + e.message); } }; r.readAsText(f); }; inp.click(); }
 function exportPNG() { if (doc.prefs.exportFormat === 'svg') return exportSVG(); exportPNGScaled(); }
 function archiveList() { try { return JSON.parse(localStorage.getItem('jakdo-archive') || '[]'); } catch (e) { return []; } }
 function archiveSet(a) { try { localStorage.setItem('jakdo-archive', JSON.stringify(a)); return true; } catch (e) { toast('브라우저 저장소를 사용할 수 없습니다'); return false; } }

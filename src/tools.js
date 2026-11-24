@@ -39,20 +39,25 @@ function buildTool(name) {
     steps: objs.map(o => (shown.has(o.id) ? '' : '(숨김) ') + describe(obj(o.id))),
   };
 }
-function instantiateTool(tool, matched) {
+function toolStepper(tool, matched) {
   const map = new Map(); tool.givens.forEach((g, i) => map.set(g.id, matched[i]));
-  const out = [];
-  for (const c of tool.objs) {
-    const o = cloneObj(c); const old = o.id; delete o.id; remapRefs(o, id => map.get(id) ?? id);
-    if (o.t === 'coord') continue;
-    if (isScreenObj(o)) { const pos = nextScreenPos(); o.d.sx = pos.sx; o.d.sy = pos.sy; }
-    const shown = tool.shown.includes(old); o.hidden = !shown || !!c.hidden;
-    const keep = (tool.labelMode ? tool.labelMode === 'keep' : tool.keepLabels) && o.label && !doc.objs.some(x => x.label === o.label); const lab0 = o.label;
-    add(o); if (o.label || o.t === 'point') giveLabel(o, shown && (o.t === 'point' ? (doc.prefs.autoLabel || keep) && c.showLabel !== false : !!c.showLabel)); if (keep) o.label = lab0; const gl = toolResultLabel(tool, o, shown); if (gl) o.label = gl;
-    map.set(old, o.id); if (shown) out.push(o.id);
-  }
-  return out;
+  const out = [], made = [], hiddenOrig = []; let k = 0;
+  const next = () => {
+    while (k < tool.objs.length) {
+      const c = tool.objs[k++]; const o = cloneObj(c); const old = o.id; delete o.id; remapRefs(o, id => map.get(id) ?? id);
+      if (o.t === 'coord') continue;
+      if (isScreenObj(o)) { const pos = nextScreenPos(); o.d.sx = pos.sx; o.d.sy = pos.sy; }
+      const shown = tool.shown.includes(old); o.hidden = !shown || !!c.hidden; if (o.hidden) hiddenOrig.push(o);
+      const keep = (tool.labelMode ? tool.labelMode === 'keep' : tool.keepLabels) && o.label && !doc.objs.some(x => x.label === o.label); const lab0 = o.label;
+      add(o); if (o.label || o.t === 'point') giveLabel(o, shown && (o.t === 'point' ? (doc.prefs.autoLabel || keep) && c.showLabel !== false : !!c.showLabel)); if (keep) o.label = lab0; const gl = toolResultLabel(tool, o, shown); if (gl) o.label = gl;
+      map.set(old, o.id); made.push(o.id); if (shown) out.push(o.id);
+      return { id: o.id, index: k - 1 };
+    }
+    return null;
+  };
+  return { next, out, made, hiddenOrig, get pos() { return k; }, get done() { return k >= tool.objs.length; } };
 }
+function instantiateTool(tool, matched) { const st = toolStepper(tool, matched); while (st.next()); return st.out; }
 function toolsAll() { return { doc: doc.tools || [], lib: toolLib() }; }
 function toolLib() { try { return JSON.parse(localStorage.getItem('jakdo-toolfolder') || '[]'); } catch (e) { return []; } }
 function saveToolLib(a) { try { localStorage.setItem('jakdo-toolfolder', JSON.stringify(a)); return true; } catch (e) { toast('브라우저 저장소를 쓸 수 없습니다'); return false; } }
@@ -93,10 +98,26 @@ function customToolDown(sx, sy) {
 }
 function scriptView(t) {
   t = t || ctool; if (!t) return toast('도구를 먼저 고르세요');
+  const stepsList = el('ol', {}, t.steps.map(s => el('li', {}, s)));
+  const info = el('p', { class: 'note' }, '단계별로 적용하려면 주어진 것을 위 순서대로 스케치에서 선택한 뒤 “단계별 적용”을 누르세요.');
+  let st = null;
+  const mark = () => { [...stepsList.children].forEach((li, i) => { li.classList.toggle('done', !!st && i < st.pos); li.classList.toggle('cur', !!st && i === st.pos); }); };
+  const startBtn = el('button', { class: 'btn', type: 'button' }, '단계별 적용');
+  const nextBtn = el('button', { class: 'btn primary', type: 'button', disabled: true }, '다음 단계');
+  const allBtn = el('button', { class: 'btn', type: 'button', disabled: true }, '나머지 모두');
+  const undoBtn = el('button', { class: 'btn ghost', type: 'button', disabled: true }, '적용 취소');
+  const finish = () => { st.hiddenOrig.forEach(o => o.hidden = true); setSel(st.out); info.textContent = '모든 단계를 적용했습니다.'; nextBtn.disabled = allBtn.disabled = undoBtn.disabled = true; startBtn.disabled = false; st = null; mark(); };
+  startBtn.onclick = () => {
+    const m = toolMatchesSelection(t); if (!m) return toast('주어진 것(' + t.givens.filter(g => !g.auto).map(g => KIND_KO[g.kind] + ' ' + g.label).join(', ') + ')을 순서대로 선택하세요');
+    snap(); st = toolStepper(t, m); startBtn.disabled = true; nextBtn.disabled = allBtn.disabled = undoBtn.disabled = false; info.textContent = '“다음 단계”를 누를 때마다 한 단계씩 작도합니다. 숨길 중간 객체도 끝날 때까지는 보입니다.'; mark();
+  };
+  nextBtn.onclick = () => { if (!st) return; const r = st.next(); if (r) { const o = obj(r.id); o.hidden = false; setSel([r.id]); flash(r.id); } mark(); if (st.done) finish(); };
+  allBtn.onclick = () => { if (!st) return; while (st.next()); finish(); };
+  undoBtn.onclick = () => { if (!st) return; st = null; undo(); redoStack.pop(); startBtn.disabled = false; nextBtn.disabled = allBtn.disabled = undoBtn.disabled = true; info.textContent = '적용을 취소했습니다.'; mark(); };
   const body = el('div', { class: 'stack script' }, t.comment ? el('p', { class: 'note' }, t.comment) : null,
     el('div', { class: 'sub' }, '주어진 것'), el('ol', {}, t.givens.map(g => el('li', {}, KIND_KO[g.kind] + ' ' + g.label + (g.auto ? ' (자동 연결)' : '')))),
-    el('div', { class: 'sub' }, '단계'), el('ol', {}, t.steps.map(s => el('li', {}, s))));
-  openDlg('스크립트 보기 — ' + t.name, body, [{ label: '닫기', primary: true }]);
+    el('div', { class: 'sub' }, '단계'), stepsList, info, el('div', { class: 'fx' }, startBtn, nextBtn, allBtn, undoBtn));
+  openDlg('스크립트 보기 — ' + t.name, body, [{ label: '닫기', primary: true, run: () => { if (st) finish(); } }], { modeless: true, onClose: () => { if (st) finish(); } });
 }
 function manageToolsDlg() {
   const box = el('div', { class: 'stack' });
