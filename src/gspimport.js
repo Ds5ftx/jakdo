@@ -68,6 +68,7 @@ GSPI.parse = (ab) => {
     if (p + len > u8.length) break;
     if (tag === 902) { sec = { type: dv.getUint16(p, true), name: '', objs: [] }; secs.push(sec); }
     else if (tag === 1300 && len > 8) pics.push(GSPI.picture(u8, p, len));
+    else if (tag === 1204 && sec && len >= 4) { const n = dv.getUint32(p, true); sec.givens = []; for (let i = 0; i < n && 8 + 4 * i <= len; i++) sec.givens.push(dv.getUint32(p + 4 + 4 * i, true) - 1); }
     else if (tag === 1100 && sec) { let e = p; while (e < p + len && u8[e]) e++; sec.name = GSPI.dec(u8.slice(p, e)); }
     else if (tag === 1000 && sec && len >= 8) { sec.scroll = { x: dv.getInt16(p + 4, true), y: dv.getInt16(p + 6, true) }; if (len >= 18) sec.angle = dv.getUint16(p + 16, true); }
     else if (tag === 2000 && sec) {
@@ -87,7 +88,7 @@ GSPI.parse = (ab) => {
 
 /* 구역 하나를 현재 doc 에 객체로 만든다. 반환: 건너뛴 객체 수 */
 GSPI.build = (F, sec, links) => {
-  const { u8, dv } = F; const map = []; let skipped = 0;
+  const { u8, dv } = F; const map = []; sec.map = map; let skipped = 0;
   const D = (r, at) => r && r.len >= at + 8 ? dv.getFloat64(r.p + at, true) : NaN;
   const W = (px, py) => ({ x: px / PXCM, y: -py / PXCM });
   const pend = {}; // 좌표계 조각
@@ -113,7 +114,8 @@ GSPI.build = (F, sec, links) => {
   sec.objs.forEach((s, i) => {
     let P = s.par.map(j => map[j]); let id = null;
     if (s.k === 23 || s.k === 59 || s.k === 19) P = P.filter(v => v != null && v !== -1);
-    if (P.some(v => v == null)) { map[i] = null; skipped++; (GSPI.miss = GSPI.miss || []).push('dep:' + s.code + '/' + s.k + '@' + sec.type); return; }
+    if (s.code === 77) { map[i] = null; return; } // 반복된 상: 반복 객체가 그린다
+    if (s.code !== 76 && s.code !== 89 && P.some(v => v == null)) { map[i] = null; skipped++; (GSPI.miss = GSPI.miss || []).push('dep:' + s.code + '/' + s.k + '@' + sec.type); return; }
     const po = j => obj(P[j]);
     try {
       switch (s.k === 23 ? 62 : (s.rec[2216] && s.rec[8004]) ? 0 : s.code) {
@@ -133,6 +135,14 @@ GSPI.build = (F, sec, links) => {
           if (s.k === 57) { id = valAt(s, 'func', [], { expr: GSPI.expr(T.t, () => null), form: 'yx', notation: 'f' }); break; }
           const v = D(T.r, T.r.len - 2 * T.n - 8); id = valAt(s, 'param', [], { v: isFinite(v) ? v : 1, min: -10, max: 10, step: 0.1, unit: 'none' }); break;
         }
+        case 76: case 89: { // 반복: [깊이 값], 원상들, 사상별 상들, 그 뒤 연쇄 객체
+          const r = s.rec[2314]; const npre = r ? dv.getUint16(r.p + 6, true) || 1 : 1, nm = r ? dv.getUint32(r.p + 8, true) || 1 : 1, depth = r ? dv.getUint32(r.p + 16, true) : 3;
+          const Q = P.slice(); const depthV = s.code === 89 ? Q.shift() : null; if (s.code === 89 && depthV == null) break;
+          const pre = Q.slice(0, npre), maps = []; for (let m = 0; m < nm; m++) maps.push(Q.slice(npre * (m + 1), npre * (m + 2)));
+          if (pre.length !== npre || pre.some(v => v == null) || maps.some(m => m.length !== npre || m.some(v => v == null))) break;
+          id = add({ t: 'iter', k: 'geo', p: [...pre, ...maps.flat(), ...(depthV != null ? [depthV] : [])], d: { pre, maps, depth: Math.min(400, depth || 3), depthV, final: false } }).id; break;
+        }
+        case 92: { if (P[0] == null || obj(P[0]).t !== 'iter') break; const r = s.rec[2317]; const sx = r ? dv.getInt16(r.p + 12, true) : 10, sy = r ? dv.getInt16(r.p + 14, true) : 10; id = add({ t: 'table', k: 'iter', p: P.filter(v => v != null), d: { sx, sy } }).id; map[i] = id; return; }
         case 1: id = mkMid(P[0]); break;
         case 2: id = mkStraight('segment', P[0], P[1]); break;
         case 63: id = mkStraight('line', P[0], P[1]); break;
@@ -197,7 +207,7 @@ GSPI.build = (F, sec, links) => {
         case 42: id = valAt(s, 'area', [P[0]]); break;
         case 44: id = valAt(s, 'arclen', [P[0]]); break;
         case 46: id = valAt(s, 'radius', [P[0]]); break;
-        case 49: id = valAt(s, 'coords', [P[0], P[1]]); break;
+        case 49: { id = valAt(s, 'coords', [P[0], P[1]]); const q = pos(s, 2300); if (q) Object.assign(obj(id).d, q); break; }
         case 65: id = valAt(s, 'x', [P[0], P[1]]); break;
         case 66: id = valAt(s, 'y', [P[0], P[1]]); break;
         case 87: id = valAt(s, 'slope', [P[0], P[1]]); break;
@@ -220,7 +230,8 @@ GSPI.build = (F, sec, links) => {
           const tmp = {}; label(s, tmp); const txt = tmp.label || '버튼';
           if (ty === 5) { id = add({ t: 'button', k: 'b', p: [], d: { act: 'link', sx, sy, text: txt } }).id; links.push({ id, page: sub }); }
           else if (ty === 1 && sub !== 3) id = add({ t: 'button', k: 'b', p: P.slice(), d: { act: 'hide', sx, sy, text: txt } }).id;
-          else if (ty === 2) id = add({ t: 'button', k: 'b', p: P.slice(0, 1), d: { act: 'anim', sx, sy, text: txt } }).id;
+          else if (ty === 2) id = add({ t: 'button', k: 'b', p: P.filter(v => v != null), d: { act: 'anim', sx, sy, text: txt } }).id;
+          else if (ty === 3 && P.length === 2 && P.every(v => v != null)) id = add({ t: 'button', k: 'b', p: P.slice(), d: { act: 'move', sx, sy, text: txt, speed: [2, 6, 15, 0][sub] ?? 6 } }).id;
           if (id != null) obj(id).hidden = !!(s.fl & 1);
           map[i] = id; if (id == null) skipped++; return;
         }
@@ -230,7 +241,7 @@ GSPI.build = (F, sec, links) => {
     map[i] = id;
     const o = obj(id); if (o.k === 'xf') o.showLabel = false;
     if (!['value', 'text', 'button', 'coord'].includes(o.t) && s.code !== 54) fin(s, id);
-    else if (o.t === 'value') { label(s, o); o.hidden = !!(s.fl & 1); }
+    else if (o.t === 'value') { label(s, o); o.hidden = !!(s.fl & 3); } // 2: GSP 가 화면에 보이지 않게 둔 값
   });
   return skipped;
 };
@@ -257,8 +268,9 @@ async function importGSPFile(file) {
       doc.prefs.autoLabel = true;
       if (sec.type === 1) { pages.push({ name: sec.name || '페이지 ' + (pages.length + 1), doc, view: { ox: -(sec.scroll ? sec.scroll.x : 0), oy: -(sec.scroll ? sec.scroll.y : 0), s: PXCM } }); links.push(L); }
       else if (doc.objs.length) {
-        recompute(); sel = doc.objs.filter(o => !['text', 'button'].includes(o.t)).map(o => o.id);
+        recompute(); const csPart = o => o.t === 'coord' || ((o.isOrigin || o.k === 'unit') && doc.objs.some(c => c.t === 'coord' && c.p.includes(o.id))); sel = doc.objs.filter(o => !['text', 'button'].includes(o.t) && !csPart(o)).map(o => o.id);
         const t = buildTool(sec.name || '도구 ' + (tools.length + 1));
+        if (!t.err && sec.givens && sec.map) { const ord = sec.givens.map(i => sec.map[i]); const at = g => { const k = ord.indexOf(g.id); return k < 0 ? 999 : k; }; t.givens.sort((a, b) => at(a) - at(b)); } // GSP 의 주어진 것 순서(1204)
         if (!t.err) { const vis = new Set(doc.objs.filter(o => !o.hidden).map(o => o.id)); t.shown = t.shown.filter(id => vis.has(id)); t.steps = t.objs.map(o => (vis.has(o.id) ? '' : '(숨김) ') + describe(obj(o.id))); tools.push(t); }
       }
     }

@@ -3715,6 +3715,7 @@ GSPI.parse = (ab) => {
     if (p + len > u8.length) break;
     if (tag === 902) { sec = { type: dv.getUint16(p, true), name: '', objs: [] }; secs.push(sec); }
     else if (tag === 1300 && len > 8) pics.push(GSPI.picture(u8, p, len));
+    else if (tag === 1204 && sec && len >= 4) { const n = dv.getUint32(p, true); sec.givens = []; for (let i = 0; i < n && 8 + 4 * i <= len; i++) sec.givens.push(dv.getUint32(p + 4 + 4 * i, true) - 1); }
     else if (tag === 1100 && sec) { let e = p; while (e < p + len && u8[e]) e++; sec.name = GSPI.dec(u8.slice(p, e)); }
     else if (tag === 1000 && sec && len >= 8) { sec.scroll = { x: dv.getInt16(p + 4, true), y: dv.getInt16(p + 6, true) }; if (len >= 18) sec.angle = dv.getUint16(p + 16, true); }
     else if (tag === 2000 && sec) {
@@ -3734,7 +3735,7 @@ GSPI.parse = (ab) => {
 
 /* 구역 하나를 현재 doc 에 객체로 만든다. 반환: 건너뛴 객체 수 */
 GSPI.build = (F, sec, links) => {
-  const { u8, dv } = F; const map = []; let skipped = 0;
+  const { u8, dv } = F; const map = []; sec.map = map; let skipped = 0;
   const D = (r, at) => r && r.len >= at + 8 ? dv.getFloat64(r.p + at, true) : NaN;
   const W = (px, py) => ({ x: px / PXCM, y: -py / PXCM });
   const pend = {}; // 좌표계 조각
@@ -3760,7 +3761,8 @@ GSPI.build = (F, sec, links) => {
   sec.objs.forEach((s, i) => {
     let P = s.par.map(j => map[j]); let id = null;
     if (s.k === 23 || s.k === 59 || s.k === 19) P = P.filter(v => v != null && v !== -1);
-    if (P.some(v => v == null)) { map[i] = null; skipped++; (GSPI.miss = GSPI.miss || []).push('dep:' + s.code + '/' + s.k + '@' + sec.type); return; }
+    if (s.code === 77) { map[i] = null; return; } // 반복된 상: 반복 객체가 그린다
+    if (s.code !== 76 && s.code !== 89 && P.some(v => v == null)) { map[i] = null; skipped++; (GSPI.miss = GSPI.miss || []).push('dep:' + s.code + '/' + s.k + '@' + sec.type); return; }
     const po = j => obj(P[j]);
     try {
       switch (s.k === 23 ? 62 : (s.rec[2216] && s.rec[8004]) ? 0 : s.code) {
@@ -3780,6 +3782,14 @@ GSPI.build = (F, sec, links) => {
           if (s.k === 57) { id = valAt(s, 'func', [], { expr: GSPI.expr(T.t, () => null), form: 'yx', notation: 'f' }); break; }
           const v = D(T.r, T.r.len - 2 * T.n - 8); id = valAt(s, 'param', [], { v: isFinite(v) ? v : 1, min: -10, max: 10, step: 0.1, unit: 'none' }); break;
         }
+        case 76: case 89: { // 반복: [깊이 값], 원상들, 사상별 상들, 그 뒤 연쇄 객체
+          const r = s.rec[2314]; const npre = r ? dv.getUint16(r.p + 6, true) || 1 : 1, nm = r ? dv.getUint32(r.p + 8, true) || 1 : 1, depth = r ? dv.getUint32(r.p + 16, true) : 3;
+          const Q = P.slice(); const depthV = s.code === 89 ? Q.shift() : null; if (s.code === 89 && depthV == null) break;
+          const pre = Q.slice(0, npre), maps = []; for (let m = 0; m < nm; m++) maps.push(Q.slice(npre * (m + 1), npre * (m + 2)));
+          if (pre.length !== npre || pre.some(v => v == null) || maps.some(m => m.length !== npre || m.some(v => v == null))) break;
+          id = add({ t: 'iter', k: 'geo', p: [...pre, ...maps.flat(), ...(depthV != null ? [depthV] : [])], d: { pre, maps, depth: Math.min(400, depth || 3), depthV, final: false } }).id; break;
+        }
+        case 92: { if (P[0] == null || obj(P[0]).t !== 'iter') break; const r = s.rec[2317]; const sx = r ? dv.getInt16(r.p + 12, true) : 10, sy = r ? dv.getInt16(r.p + 14, true) : 10; id = add({ t: 'table', k: 'iter', p: P.filter(v => v != null), d: { sx, sy } }).id; map[i] = id; return; }
         case 1: id = mkMid(P[0]); break;
         case 2: id = mkStraight('segment', P[0], P[1]); break;
         case 63: id = mkStraight('line', P[0], P[1]); break;
@@ -3844,7 +3854,7 @@ GSPI.build = (F, sec, links) => {
         case 42: id = valAt(s, 'area', [P[0]]); break;
         case 44: id = valAt(s, 'arclen', [P[0]]); break;
         case 46: id = valAt(s, 'radius', [P[0]]); break;
-        case 49: id = valAt(s, 'coords', [P[0], P[1]]); break;
+        case 49: { id = valAt(s, 'coords', [P[0], P[1]]); const q = pos(s, 2300); if (q) Object.assign(obj(id).d, q); break; }
         case 65: id = valAt(s, 'x', [P[0], P[1]]); break;
         case 66: id = valAt(s, 'y', [P[0], P[1]]); break;
         case 87: id = valAt(s, 'slope', [P[0], P[1]]); break;
@@ -3867,7 +3877,8 @@ GSPI.build = (F, sec, links) => {
           const tmp = {}; label(s, tmp); const txt = tmp.label || '버튼';
           if (ty === 5) { id = add({ t: 'button', k: 'b', p: [], d: { act: 'link', sx, sy, text: txt } }).id; links.push({ id, page: sub }); }
           else if (ty === 1 && sub !== 3) id = add({ t: 'button', k: 'b', p: P.slice(), d: { act: 'hide', sx, sy, text: txt } }).id;
-          else if (ty === 2) id = add({ t: 'button', k: 'b', p: P.slice(0, 1), d: { act: 'anim', sx, sy, text: txt } }).id;
+          else if (ty === 2) id = add({ t: 'button', k: 'b', p: P.filter(v => v != null), d: { act: 'anim', sx, sy, text: txt } }).id;
+          else if (ty === 3 && P.length === 2 && P.every(v => v != null)) id = add({ t: 'button', k: 'b', p: P.slice(), d: { act: 'move', sx, sy, text: txt, speed: [2, 6, 15, 0][sub] ?? 6 } }).id;
           if (id != null) obj(id).hidden = !!(s.fl & 1);
           map[i] = id; if (id == null) skipped++; return;
         }
@@ -3877,7 +3888,7 @@ GSPI.build = (F, sec, links) => {
     map[i] = id;
     const o = obj(id); if (o.k === 'xf') o.showLabel = false;
     if (!['value', 'text', 'button', 'coord'].includes(o.t) && s.code !== 54) fin(s, id);
-    else if (o.t === 'value') { label(s, o); o.hidden = !!(s.fl & 1); }
+    else if (o.t === 'value') { label(s, o); o.hidden = !!(s.fl & 3); } // 2: GSP 가 화면에 보이지 않게 둔 값
   });
   return skipped;
 };
@@ -3904,8 +3915,9 @@ async function importGSPFile(file) {
       doc.prefs.autoLabel = true;
       if (sec.type === 1) { pages.push({ name: sec.name || '페이지 ' + (pages.length + 1), doc, view: { ox: -(sec.scroll ? sec.scroll.x : 0), oy: -(sec.scroll ? sec.scroll.y : 0), s: PXCM } }); links.push(L); }
       else if (doc.objs.length) {
-        recompute(); sel = doc.objs.filter(o => !['text', 'button'].includes(o.t)).map(o => o.id);
+        recompute(); const csPart = o => o.t === 'coord' || ((o.isOrigin || o.k === 'unit') && doc.objs.some(c => c.t === 'coord' && c.p.includes(o.id))); sel = doc.objs.filter(o => !['text', 'button'].includes(o.t) && !csPart(o)).map(o => o.id);
         const t = buildTool(sec.name || '도구 ' + (tools.length + 1));
+        if (!t.err && sec.givens && sec.map) { const ord = sec.givens.map(i => sec.map[i]); const at = g => { const k = ord.indexOf(g.id); return k < 0 ? 999 : k; }; t.givens.sort((a, b) => at(a) - at(b)); } // GSP 의 주어진 것 순서(1204)
         if (!t.err) { const vis = new Set(doc.objs.filter(o => !o.hidden).map(o => o.id)); t.shown = t.shown.filter(id => vis.has(id)); t.steps = t.objs.map(o => (vis.has(o.id) ? '' : '(숨김) ') + describe(obj(o.id))); tools.push(t); }
       }
     }
@@ -4010,7 +4022,7 @@ function importJSP(txt, name) {
   toast(`JavaSketchpad 작도를 새 페이지로 열었습니다` + (skipped ? ` · 지원하지 않는 명령 ${skipped}개는 건너뛰었습니다` : ''));
 }
 
-const GSPX_T = { head: "R1NQNBwAAACEAwAABQABAAAAAAAAAAAAAQAEAAAASgWSAgkAAgAAAPIBAACGAwAABQAFAAUAAwADAAQAAAAAAK4A7J20IOusuOyEnOyXkCDtj6ztlajrkJwg7KCV67O0IOykkSDsnbzrtoDqsIAgR1NQIOydmCDsg4jroZzsmrQg67KE7KCE7J2EIOyCrOyaqe2VtCDrp4zrk6TslrTsoLgg7J6I7Ja0IOyCrOyaqe2VoCDsiJgg7JeG7Iq164uI64ukLiAg66y47ISc66W8IOyCrOuzuOycvOuhnOyEnCDsl7TqsqDsirXri4jri6QuAACrAOydtCDrrLjshJzsl5Ag7Y+s7ZWo65CcIOygleuztCDspJEg7J2867aA6rCAIEdTUCDsnZgg7J207KCEIOuyhOyghOydhCDsgqzsmqntlbQg66eM65Ok7Ja07KC4IOyeiOyWtCDsgqzsmqntlaAg7IiYIOyXhuyKteuLiOuLpC4gIOusuOyEnOulvCDsgqzrs7jsnLzroZzshJwg7Je06rKg7Iq164uI64ukLgB/AOydtCDrrLjshJzsl5Ag7Y+s7ZWo65CcIOygleuztCDspJEg7J2867aA6rCAIEdTUCDsnZgg7J207KCEIOuyhOyghOydhCDsgqzsmqntlbQg66eM65Ok7Ja07KC4IOyeiOyWtCDsgqzsmqntlaAg7IiYIOyXhuyKteuLiOuLpC4AAAAAAO4DAAAAAAAA7wMAAAAAAACHAwAA", p902: "XgEAAIYDAAABAAQABAABAAEAAgAAAAAAAAAAAH0A7J20IOusuOyEnOuKlCBHU1Ag7J2YIOyDiOuhnOyatCDrsoTsoITsnYQg7IKs7Jqp7ZW07IScIOunjOuTpOyWtOynhCDqsoPsnoXri4jri6QuICDrrLjshJzrpbwg7J297Ja065Ok7J207KeAIOuqu+2WiOyKteuLiOuLpC4AxwDsnbQg66y47ISc64qUIEdTUCDsnZgg7IOI66Gc7Jq0IOuyhOyghOydhCDsgqzsmqntlbQg66eM65Ok7Ja07KeEIOqyg+yeheuLiOuLpC4gIOusuOyEnOydmCDsoJXrs7Qg7KSRIOydvOu2gOuKlCDsnb3slrTrk6TsnbTsp4Ag66q77ZWgIOyImCDsnojsirXri4jri6QuICDsnbQg66y47ISc66W8IOyCrOuzuOycvOuhnOyEnCDsl7TqsqDsirXri4jri6QuAA==", p1000: "JAAAAOgDAAAAAAAAAAAAADmcAAAAAAAAAQABAAAAAAAjAAAAAAAAAAAAAAA=", prest: "BgAAAGAJAAAAAAIAAAAGAAAAYQkAAAUAAAAAAAYAAABiCQAAAAAAAAAABgAAAGMJAAAAAAEAAAAGAAAAZAkAAAAAAQAAAAYAAABlCQAAAAABAAAABgAAAGYJAAAAAAEAAAAGAAAAZwkAAAAAAQAAAAYAAABoCQAAAAABAAAABgAAAGkJAAAAAAAAAAAGAAAAagkAAAAAAQAAAAYAAABrCQAAAQAAAAAABgAAAGwJAAAAAAEAAAAGAAAAbQkAAAAAAQAAAAYAAABuCQAAAAABAAAABgAAAG8JAAAAAAEAAAAGAAAAcAkAAAAAAQAAAAYAAABxCQAAAAABAAAABgAAAHIJAAAAAAEAAAAGAAAAcwkAAAAAAQAAAAYAAABfCQAAAAAAAAAAGgAAACwjAABHU1A1X3dfMTAxNEsvRGVjIDE3IDIwMTAAAAQAAAAwIwAAYAAAABQAAACxBAAAAQBUaW1lcyBOZXcgUm9tYW4AAAAMAAAAsQQAAAAA6rW066a8AGV3IBQAAACzBAAAAAAQAAEAAQABAAEAAQABAAEAAQAUAAAAswQAAAEAEAABAAEAAQABAAEAAQABAAEAAgAAABInAAABAAIAAAATJwAAAAACAAAAFCcAAAEAAgAAABUnAAABAAIAAAAWJwAAAAACAAAAFycAAAEABgAAACQnAAAAAP8AAAAGAAAAJCcAAAEAAACAAAYAAAAkJwAAAgAAgAAABgAAACQnAAADAAD/AAAGAAAAJCcAAAQAgACAAAYAAAAkJwAABQCAAAAABgAAACQnAAAGAP8A/wAGAAAAJCcAAAcA////AAYAAAAkJwAACADAwMAABgAAACQnAAAJAAAAAAAGAAAAJCcAAAoA/4AAAAYAAAAkJwAACwAAAAAABgAAACQnAAAMAGBgYAAGAAAAJCcAAA0AQEBAAAYAAAAkJwAADgD/AAAAAgAAACUnAAAAAAIAAAAmJwAAAQACAAAAJycAAAEAAgAAABgnAAABAAIAAAA4JwAAAgACAAAAOCcAAAIBAgAAADgnAAACAgIAAAA5JwAAAQACAAAAOicAAAEAMAAAADwnAAAAABoAEQEQAAEAAQABAAEAAQABAAEAAQABAFRpbWVzIE5ldyBSb21hbgBfAPD+EwMwAAAAPCcAAAEAGgARARAAAQABAAEAAQABAAEAAQABAAEAVGltZXMgTmV3IFJvbWFuAF8A8P4TAygAAAA8JwAAAgAaAAEAEAABAAEAAQABAAEAAQABAAEAAADqtbTrprwAZXcgUm9tYSgAAAA8JwAAAwAaAAEAEAABAAEAAQABAAEAAQABAAEAAADqtbTrprwAZXcgUm9tYSgAAAA8JwAABAAaAAEAEAABAAEAAQABAAEAAQABAAEAAADqtbTrprwAZXcgUm9tYSgAAAA8JwAABQAaAAEAEAABAAEAAQABAAEAAQABAAEAAADqtbTrprwAZXcgUm9tYQ==" };
+const GSPX_T = { t902: "hAEAAIYDAAACAAQABAADAAMABAAAAAAAAAAAALsA7J20IOusuOyEnOydmCDsgqzsmqnsnpAg64+E6rWsIOykkSDsnbzrtoDqsIAgR1NQIOydmCDsg4jroZzsmrQg67KE7KCE7J2EIOyCrOyaqe2VtCDrp4zrk6TslrTsp4Qg6rKD7J207Ja07IScIOydveyWtOuTpOydvCDsiJgg7JeG7Iq164uI64ukLiAg7J20IOusuOyEnOulvCDsgqzrs7jsnLzroZzshJwg7Je06rKg7Iq164uI64ukLgCuAOydtCDrrLjshJzsnZgg7IKs7Jqp7J6QIOuPhOq1rCDspJEg7J2867aA6rCAIOyDiOuhnOyatCDrsoTsoITsnZggR1NQIOulvCDsgqzsmqntlbQg66eM65Ok7Ja07KGM7Iq164uI64ukLiAg7IKs7Jqp7J6QIOuPhOq1rOqwgCDsoJzrjIDroZwg7J6R64+Z7ZWY7KeAIOyViuydhCDsiJgg7J6I7Iq164uI64ukLgAA", head: "R1NQNBwAAACEAwAABQABAAAAAAAAAAAAAQAEAAAASgWSAgkAAgAAAPIBAACGAwAABQAFAAUAAwADAAQAAAAAAK4A7J20IOusuOyEnOyXkCDtj6ztlajrkJwg7KCV67O0IOykkSDsnbzrtoDqsIAgR1NQIOydmCDsg4jroZzsmrQg67KE7KCE7J2EIOyCrOyaqe2VtCDrp4zrk6TslrTsoLgg7J6I7Ja0IOyCrOyaqe2VoCDsiJgg7JeG7Iq164uI64ukLiAg66y47ISc66W8IOyCrOuzuOycvOuhnOyEnCDsl7TqsqDsirXri4jri6QuAACrAOydtCDrrLjshJzsl5Ag7Y+s7ZWo65CcIOygleuztCDspJEg7J2867aA6rCAIEdTUCDsnZgg7J207KCEIOuyhOyghOydhCDsgqzsmqntlbQg66eM65Ok7Ja07KC4IOyeiOyWtCDsgqzsmqntlaAg7IiYIOyXhuyKteuLiOuLpC4gIOusuOyEnOulvCDsgqzrs7jsnLzroZzshJwg7Je06rKg7Iq164uI64ukLgB/AOydtCDrrLjshJzsl5Ag7Y+s7ZWo65CcIOygleuztCDspJEg7J2867aA6rCAIEdTUCDsnZgg7J207KCEIOuyhOyghOydhCDsgqzsmqntlbQg66eM65Ok7Ja07KC4IOyeiOyWtCDsgqzsmqntlaAg7IiYIOyXhuyKteuLiOuLpC4AAAAAAO4DAAAAAAAA7wMAAAAAAACHAwAA", p902: "XgEAAIYDAAABAAQABAABAAEAAgAAAAAAAAAAAH0A7J20IOusuOyEnOuKlCBHU1Ag7J2YIOyDiOuhnOyatCDrsoTsoITsnYQg7IKs7Jqp7ZW07IScIOunjOuTpOyWtOynhCDqsoPsnoXri4jri6QuICDrrLjshJzrpbwg7J297Ja065Ok7J207KeAIOuqu+2WiOyKteuLiOuLpC4AxwDsnbQg66y47ISc64qUIEdTUCDsnZgg7IOI66Gc7Jq0IOuyhOyghOydhCDsgqzsmqntlbQg66eM65Ok7Ja07KeEIOqyg+yeheuLiOuLpC4gIOusuOyEnOydmCDsoJXrs7Qg7KSRIOydvOu2gOuKlCDsnb3slrTrk6TsnbTsp4Ag66q77ZWgIOyImCDsnojsirXri4jri6QuICDsnbQg66y47ISc66W8IOyCrOuzuOycvOuhnOyEnCDsl7TqsqDsirXri4jri6QuAA==", p1000: "JAAAAOgDAAAAAAAAAAAAADmcAAAAAAAAAQABAAAAAAAjAAAAAAAAAAAAAAA=", prest: "BgAAAGAJAAAAAAIAAAAGAAAAYQkAAAUAAAAAAAYAAABiCQAAAAAAAAAABgAAAGMJAAAAAAEAAAAGAAAAZAkAAAAAAQAAAAYAAABlCQAAAAABAAAABgAAAGYJAAAAAAEAAAAGAAAAZwkAAAAAAQAAAAYAAABoCQAAAAABAAAABgAAAGkJAAAAAAAAAAAGAAAAagkAAAAAAQAAAAYAAABrCQAAAQAAAAAABgAAAGwJAAAAAAEAAAAGAAAAbQkAAAAAAQAAAAYAAABuCQAAAAABAAAABgAAAG8JAAAAAAEAAAAGAAAAcAkAAAAAAQAAAAYAAABxCQAAAAABAAAABgAAAHIJAAAAAAEAAAAGAAAAcwkAAAAAAQAAAAYAAABfCQAAAAAAAAAAGgAAACwjAABHU1A1X3dfMTAxNEsvRGVjIDE3IDIwMTAAAAQAAAAwIwAAYAAAABQAAACxBAAAAQBUaW1lcyBOZXcgUm9tYW4AAAAMAAAAsQQAAAAA6rW066a8AGV3IBQAAACzBAAAAAAQAAEAAQABAAEAAQABAAEAAQAUAAAAswQAAAEAEAABAAEAAQABAAEAAQABAAEAAgAAABInAAABAAIAAAATJwAAAAACAAAAFCcAAAEAAgAAABUnAAABAAIAAAAWJwAAAAACAAAAFycAAAEABgAAACQnAAAAAP8AAAAGAAAAJCcAAAEAAACAAAYAAAAkJwAAAgAAgAAABgAAACQnAAADAAD/AAAGAAAAJCcAAAQAgACAAAYAAAAkJwAABQCAAAAABgAAACQnAAAGAP8A/wAGAAAAJCcAAAcA////AAYAAAAkJwAACADAwMAABgAAACQnAAAJAAAAAAAGAAAAJCcAAAoA/4AAAAYAAAAkJwAACwAAAAAABgAAACQnAAAMAGBgYAAGAAAAJCcAAA0AQEBAAAYAAAAkJwAADgD/AAAAAgAAACUnAAAAAAIAAAAmJwAAAQACAAAAJycAAAEAAgAAABgnAAABAAIAAAA4JwAAAgACAAAAOCcAAAIBAgAAADgnAAACAgIAAAA5JwAAAQACAAAAOicAAAEAMAAAADwnAAAAABoAEQEQAAEAAQABAAEAAQABAAEAAQABAFRpbWVzIE5ldyBSb21hbgBfAPD+EwMwAAAAPCcAAAEAGgARARAAAQABAAEAAQABAAEAAQABAAEAVGltZXMgTmV3IFJvbWFuAF8A8P4TAygAAAA8JwAAAgAaAAEAEAABAAEAAQABAAEAAQABAAEAAADqtbTrprwAZXcgUm9tYSgAAAA8JwAAAwAaAAEAEAABAAEAAQABAAEAAQABAAEAAADqtbTrprwAZXcgUm9tYSgAAAA8JwAABAAaAAEAEAABAAEAAQABAAEAAQABAAEAAADqtbTrprwAZXcgUm9tYSgAAAA8JwAABQAaAAEAEAABAAEAAQABAAEAAQABAAEAAADqtbTrprwAZXcgUm9tYQ==" };
 /* ================= GSP 5 문서(.gsp)로 저장 =================
    GSP 5.03 이 저장한 파일을 본으로 삼아 문서·페이지 머리글을 그대로 쓰고, 객체 레코드만 새로 만든다. */
 const GSPX = {};
@@ -4083,6 +4095,33 @@ GSPX.markup = (text, maxw = 640) => {
   });
   out.push(62); return out;
 };
+GSPX.capRec = (mk, sx, sy) => { const tail = mk.length % 2 ? 3 : 4; return new GSPX.B().hex('fc080000').u32(18 + mk.length + tail - 2).u32(4).i16(sx).i16(sy).u16(mk.length).bytes(mk).zeros(tail).get(); };
+GSPX.MOVESP = { 2: 0, 6: 1, 15: 2, 0: 3 }; // 앱 이동 속도 → GSP 이동 버튼 속도 번호
+/* 사용자 도구를 GSP 도구 구역으로 쓰기 위한 임시 문서: 주어진 것은 자유 객체로, 나머지는 도구의 객체 그대로 */
+GSPX.toolDoc = (t, base) => {
+  if (!t || !t.objs || !t.objs.length || !t.givens) return null;
+  const td = newDoc(); td.prefs = { ...(base && base.prefs || {}) }; const ids = new Set(); let nid = 900000, k = 0;
+  const put = o => { o.p = o.p || []; o.d = o.d || {}; if (o.w == null) o.w = 2; if (o.ps == null) o.ps = 2; if (o.dash == null) o.dash = 0; td.objs.push(o); ids.add(o.id); return o.id; };
+  const bo = id => base && base.objs.find(o => o.id === id);
+  const freeAt = (lab, i) => put({ id: nid++, t: 'point', k: 'free', p: [], d: { x: 2 + 2.5 * i, y: -2 - (i % 2) * 1.5 }, label: lab || '', showLabel: !!lab, color: 'red' });
+  for (const g of t.givens) {
+    const b = bo(g.id);
+    if (g.kind === 'point') put({ id: g.id, t: 'point', k: 'free', p: [], d: { x: 2 + 2.5 * k, y: -2 - (k % 2) * 1.5 }, label: g.label || '', showLabel: true, color: 'red' });
+    else if (g.kind === 'value' && ((b && isFnObj(b)) || t.objs.some(o => (o.d && o.d.fn === g.id) || (o.d && typeof o.d.expr === 'string' && new RegExp('#' + g.id + '\\s*\\(').test(o.d.expr))))) put({ id: g.id, t: 'value', k: 'func', p: [], d: { expr: b && b.d.expr && !/#/.test(b.d.expr) ? b.d.expr : 'x', form: 'yx', notation: 'f', sx: 10, sy: 10 + 24 * k }, label: g.label || 'f', color: 'ink' }); // 함수가 주어진 것
+    else if (g.kind === 'value') put({ id: g.id, t: 'value', k: 'param', p: [], d: { v: b && b.k === 'param' ? +b.d.v || 1 : 1, sx: 10, sy: 10 + 24 * k, min: -10, max: 10, step: 0.1 }, label: g.label || 't', color: 'ink' });
+    else if (g.kind === 'straight' || g.kind === 'circle') {
+      const a = freeAt('', k), c = freeAt('', k + 1); const ty = g.kind === 'circle' ? 'circle' : (b && isStraight(b) ? b.t : 'segment');
+      put({ id: g.id, t: ty, k: g.kind === 'circle' ? 'cp' : '2p', p: [a, c], d: {}, label: g.label || '', color: 'ink' });
+    } else if (g.kind === 'coord') {
+      put({ id: g.id, t: 'coord', k: 'given', p: [], d: {}, color: 'ink' }); td.coordId = g.id; // GSP 도구의 '좌표계' 주어진 것 (0/39)
+    } else return null;
+    k++;
+  }
+  const shown = new Set(t.shown || []);
+  for (const c of t.objs) { const o = JSON.parse(JSON.stringify(c)); o.hidden = !shown.has(c.id) || !!c.hidden; put(o); }
+  if (td.objs.some(o => o.p.some(id => !ids.has(id)))) return null;
+  td.nid = nid + 1; return td;
+};
 GSPX.setPref = (u8, tag, val, at = 0) => { const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength); let off = 0; while (off + 8 <= u8.length) { const len = dv.getUint32(off, true), t = dv.getUint32(off + 4, true); if (t === tag && len >= at + 2) { dv.setUint16(off + 8 + at, val, true); return; } off += 8 + len; } };
 
 GSPX.picBytes = (src, w, h) => { // 그림을 PNG 바이트로 (PNG가 아니면 캔버스로 다시 그려 변환)
@@ -4097,10 +4136,10 @@ GSPX.picBytes = (src, w, h) => { // 그림을 PNG 바이트로 (PNG가 아니면
 GSPX.rad = d => !d.prefs.deg || d.objs.some(x => x.t === 'fplot' || (x.t === 'value' && x.k === 'func')); // 함수 그래프가 있으면 라디안
 function buildGSP() {
   stashPage(); const keep = doc; const W = new GSPX.W(); let skipped = 0, fixed = 0; GSPX.skips = [];
-  const head = GSPX.b64(GSPX_T.head); new DataView(head.buffer).setUint16(14, book.pages.length, true); new DataView(head.buffer).setUint16(16, 0, true); new DataView(head.buffer).setUint16(12 + 24, 1 + book.pages.length, true); // 구역 수(부록 1 + 페이지)
+  const head = GSPX.b64(GSPX_T.head); const hd = new DataView(head.buffer); new DataView(head.buffer).setUint16(14, book.pages.length, true); new DataView(head.buffer).setUint16(16, 0, true); new DataView(head.buffer).setUint16(12 + 24, 1 + book.pages.length, true); // 구역 수(부록 1 + 페이지)
   const pics = []; // 그림 자료: 문서 머리(부록 구역)의 1300 레코드로 저장
   try {
-    book.pages.forEach((pg, pi) => {
+    const writeSec = (pg, pi, tool) => {
       doc = pg.doc; reindex(); recompute();
       const V = pg.view && pg.view.s ? pg.view : { ox: 0, oy: 0, s: PXCM };
       const x0 = -V.ox / V.s, y0 = V.oy / V.s; // 화면 왼쪽 위의 세계 좌표
@@ -4146,6 +4185,9 @@ function buildGSP() {
             const O = obj(o.p[0]); const og = G[O.id]; const u = (o.d.u || 1) * PXCM;
             if (o.d.axis === 'y') { idx.set(o.id, -1); continue; } // 직사각 좌표계의 y 단위점은 좌표계를 만들 때 씀
             id = emit(52, 1, 40, [P1(O.id)], o, [[2003, new GSPX.B().u32(52).f64(u).get()]], { e: 0x221 });
+          } else if (o.t === 'coord' && o.k === 'given') {
+            const cl = GSPX.label({ label: 'S[1]', showLabel: false }); cl[4] = 1; // 세 번째 값 1: 문서의 좌표계에 자동으로 대입
+            id = emit(0, 1, 39, [], null, [[2005, cl], [2008, Uint8Array.of(0, 0)], [2201, new GSPX.B().zeros(16).get()]], { e: 0x121 });
           } else if (o.t === 'coord') {
             const [O, U, Vy] = o.p; const iO = P1(O), iU = P1(U); if (!iO || !iU) throw 0;
             const u = (obj(U).d.u || 1) * PXCM;
@@ -4220,6 +4262,8 @@ function buildGSP() {
           } else if (id == null && o.t === 'value') {
             const M = { ratio3: [47, 51], len: [36, 48], dist: [37, 48], angle: [41, 49], area: [42, 50], arclen: [44, 48], radius: [46, 48], x: [65, 51], y: [66, 51], slope: [87, 51], ptval: [94, 51] }[o.k];
             if (M) { let p = par; if (o.k === 'ptval') { const pt = obj(o.p[0]); if (!pt || pt.k !== 'on') throw 0; p = [P1(pt.id), P1(pt.p[0])]; } if ((o.k === 'x' || o.k === 'y' || o.k === 'slope') && p.length === 1) { const cs = doc.coordId && P1(doc.coordId); if (!cs) throw 0; p = [p[0], cs]; } id = emit(M[0], 7, M[1], p, o, valRec(o)); }
+            else if (o.k === 'coords') { let p = par.slice(0, 2); if (p.length === 1) { const cs = doc.coordId && P1(doc.coordId); if (!cs) throw 0; p = [p[0], cs]; } let txt = ''; try { txt = valueText(o); } catch (e) { } id = emit(49, 0, 34, p, o, [[2300, GSPX.capRec(GSPX.markup(txt || '( , )'), o.d.sx || 10, o.d.sy || 10)], [2008, Uint8Array.of(0, 0)]]); }
+            else if (o.k === 'eq') { const L = obj(o.p[0]); const code = L && isStraight(L) ? 50 : L && L.t === 'circle' ? 51 : 0; if (!code) throw 0; let p = par.slice(0, 2); if (p.length === 1) { const cs = doc.coordId && P1(doc.coordId); if (!cs) throw 0; p = [p[0], cs]; } let txt = ''; try { txt = valueText(o); } catch (e) { } id = emit(code, 0, code === 50 ? 36 : 37, p, o, [[2300, GSPX.capRec(GSPX.markup(txt || 'y = '), o.d.sx || 10, o.d.sy || 10)], [2008, Uint8Array.of(0, 0)]]); }
             else if (o.k === 'calc') { const T = GSPX.tokens(o.d.expr); id = emit(48, 11, 51, T.refs.map(P1), o, [[2311, exprRec(o, T.toks, 'calc')], [2008, Uint8Array.of(1, 0)]]); }
             else if (o.k === 'func' && (!o.d.form || o.d.form === 'yx')) { const T = GSPX.tokens(o.d.expr); const l = GSPX.label({ label: o.label || 'f', showLabel: false }, 6); id = T.refs.length ? emit(71, 11, 57, T.refs.map(P1), o, [[2311, exprRec(o, T.toks, 'func')], [2005, l], [2008, Uint8Array.of(0, 0)]]) : emit(0, 11, 57, [], o, [[2311, exprRec(o, T.toks, 'func')], [2005, l], [2008, Uint8Array.of(1, 0)], [2211, GSPX.rect(o)]]); }
             else if (o.k === 'param') { const T = GSPX.tokens(String(+(+o.d.v).toFixed(6))); const l = GSPX.label({ label: o.label || 't', showLabel: false }, 6); id = emit(0, 11, 79, [], o, [[2311, exprRec(o, T.toks.length ? T.toks : [0], 'param')], [2005, l], [2008, Uint8Array.of(1, 0)], [2211, GSPX.rect(o)]]); }
@@ -4236,6 +4280,30 @@ function buildGSP() {
             const tail = mk.length % 2 ? 3 : 4; const b = new GSPX.B().hex('fc080000').u32(18 + mk.length + tail - 2).u32(4).i16(sx).i16(sy).u16(mk.length).bytes(mk).zeros(tail);
             const lines = txt.split('\n'); const ww = o.d.wrap || 640; const w = Math.min(ww, Math.max(40, ...lines.map(l => l.length * 9))); const nl = lines.reduce((a, l) => a + Math.max(1, Math.ceil(l.length * 8 / ww)), 0); const hgt = nl * 18 + 6;
             id = emit(0, 0, 19, [], o, [[2300, b.get()], [2008, Uint8Array.of(0, 0)], [2200, new GSPX.B().i16(sx).i16(sy).i16(sx + w).i16(sy + hgt).get()]]);
+          } else if (id == null && o.t === 'button' && (o.d.act === 'anim' || o.d.act === 'move')) {
+            const sx = o.d.sx || 10, sy = o.d.sy || 10, l = GSPX.label({ label: o.d.text || '버튼', showLabel: true }, o.d.act === 'move' ? 4 : 7);
+            if (o.d.act === 'anim') {
+              const p = [...new Set(par.filter(v => v > 0))]; if (!p.length) throw 0;
+              const b3 = new GSPX.B().u32(62); p.forEach(() => b3.hex('000000000000c0410000000000000000' + '0000c846').zeros(12)); // 대상마다 32바이트 (방향·속도)
+              id = emit(62, 10, 23, p, o, [[2003, b3.get()], [2310, new GSPX.B().hex('06090000').u32(0x18).u32(0x0c).u16(2).u16(0).zeros(4).i16(sx).i16(sy).get()], [2005, l], [2008, Uint8Array.of(1, 0)]]);
+            } else {
+              if (par.length !== 2) throw 0; const sp = GSPX.MOVESP[o.d.speed ?? 6] ?? 1;
+              id = emit(62, 10, 23, par, o, [[2310, new GSPX.B().hex('06090000').u32(0x18).u32(0x0c).u16(3).u16(sp).zeros(4).i16(sx).i16(sy).get()], [2005, l], [2008, Uint8Array.of(1, 0)]]);
+            }
+          } else if (id == null && o.t === 'iter' && o.k === 'geo') {
+            const pre = o.d.pre || [], maps = o.d.maps || []; const chain = iterChain(o).filter(c => P1(c.id) > 0);
+            const dv = o.d.depthV != null ? P1(o.d.depthV) : null; if (o.d.depthV != null && !(dv > 0)) throw 0;
+            const p = [...(dv ? [dv] : []), ...pre.map(P1), ...maps.flat().map(P1), ...chain.map(c => P1(c.id))];
+            const r = new GSPX.B().u32(0).u16(0).u16(pre.length).u32(maps.length).u32((Math.random() * 0x7fffffff) >>> 0).u32(Math.max(0, o.d.depth ?? 3)).u32(0).get();
+            id = emit(dv ? 89 : 76, 14, 64, p, o, [[2314, r]]);
+            idx.set(o.id, id);
+            for (const c of chain) { // 반복된 상 (그려지는 객체마다 하나)
+              if (c.t === 'value' || isScreenObj(c) || c.t === 'locus' || (c.hidden && !o.d.drawHidden) || (c.t === 'point' && o.d.ptsToo === false)) continue;
+              emit(77, 15, 65, [P1(c.id), id], c, [], c.t === 'point' ? { e: 0x221 } : {});
+            }
+          } else if (id == null && o.t === 'table' && o.k === 'iter') {
+            const p = [P1(o.p[0]), ...o.p.slice(1).map(P1).filter(v => v > 0)];
+            id = emit(92, 17, 84, p, o, [[2317, new GSPX.B().hex('0d090000').u32(0x1c).u32(0x10).i16(o.d.sx || 10).i16(o.d.sy || 10).zeros(12).get()], [2008, Uint8Array.of(1, 0)]]);
           } else if (id == null && o.t === 'button' && (o.d.act === 'hide' || o.d.act === 'link')) {
             const sx = o.d.sx || 10, sy = o.d.sy || 10, link = o.d.act === 'link';
             const ty = link ? [5, Math.max(0, book.pages.findIndex(p => p.id === o.d.pid))] : [1, 6];
@@ -4252,6 +4320,16 @@ function buildGSP() {
         }
         if (id != null) idx.set(o.id, id);
       }
+      if (tool) { // 사용자 도구 구역: 902(종류 2), 이름, 객체, 903
+        const gi = (pg.givens || []).map(id => idx.get(id)); if (!gi.length || gi.some(v => !(v > 0))) throw new Error('givens');
+        W.raw(GSPX.b64(GSPX_T.t902));
+        W.rec(1002, new GSPX.B().zeros(16).u16(GSPX.rad(doc) ? 0 : 1).u16(1).zeros(4).u32(recs.length).zeros(8).get()); // 도구 머리 (페이지의 1000 과 같은 꼴)
+        W.rec(1100, new GSPX.B().bytes(GSPX.utf8(pg.name || '도구')).u8(0).get());
+        W.rec(1201, new GSPX.B().hex('010054696d6573204e657720526f6d616e000000').get()); W.rec(1203, new GSPX.B().hex('0000100001000100010001000100010001000100').get());
+        for (const r of recs) { W.rec(2000, r.h); for (const [t, u] of r.rs) W.rec(t, u); W.rec(2007, new Uint8Array(0)); }
+        const gb = new GSPX.B().u32(gi.length); gi.forEach(v => gb.u32(v)); W.rec(1204, gb.get()); // 주어진 것(맞춤 순서)
+        W.rec(1003, new Uint8Array(0)); W.rec(903, new Uint8Array(0)); return;
+      }
       // 페이지 머리글
       const p902 = GSPX.b64(GSPX_T.p902), p1000 = GSPX.b64(GSPX_T.p1000); new DataView(p1000.buffer).setUint32(8 + 24, recs.length, true); new DataView(p1000.buffer).setUint16(8 + 16, GSPX.rad(doc) ? 0 : 1, true); new DataView(p1000.buffer).setUint16(8 + 8, 0x4000 + pi * 0x0731 + 17, true); // @16 각 단위(0 라디안, 1 도), @8 페이지마다 다른 값
       W.raw(p902); W.raw(p1000);
@@ -4260,7 +4338,16 @@ function buildGSP() {
       for (const r of recs) { W.rec(2000, r.h); for (const [t, u] of r.rs) W.rec(t, u); W.rec(2007, new Uint8Array(0)); }
       if (csFirst) W.rec(9005, new GSPX.B().u32(csFirst).get());
       W.rec(1001, new Uint8Array(0)); W.rec(903, new Uint8Array(0));
-    });
+    };
+    book.pages.forEach((pg, pi) => writeSec(pg, pi));
+    // 사용자 도구: 주어진 것과 도구 객체로 임시 문서를 만들어 도구 구역으로 저장
+    const tools = []; const seenT = new Set(); book.pages.forEach(pg => (pg.doc.tools || []).forEach(t => { if (!seenT.has(t)) { seenT.add(t); tools.push(t); } }));
+    let nTools = 0;
+    for (const t of tools) {
+      const td = GSPX.toolDoc(t, book.pages[0].doc); if (!td) { skipped++; GSPX.skips.push('tool:' + t.name + ':' + (t.givens || []).map(g => g.kind).join(',')); continue; }
+      const before = W.n; try { writeSec({ doc: td, name: t.name, givens: t.givens.map(g => g.id), view: { ox: 0, oy: 0, s: PXCM } }, -1, true); nTools++; } catch (e) { skipped++; GSPX.skips.push('tool:' + t.name + ':' + e.message); }
+    }
+    hd.setUint16(16, nTools, true); hd.setUint16(12 + 24, 1 + book.pages.length + nTools, true);
     W.rec(901, new Uint8Array(0));
   } finally { doc = keep; reindex(); recompute(); }
   const F = new GSPX.W(); let at = 4; const hv = new DataView(head.buffer); // 머리에서 1006 레코드 뒤에 그림 레코드를 끼움
