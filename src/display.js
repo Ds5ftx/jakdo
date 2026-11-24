@@ -130,13 +130,13 @@ function makeButton2(act) {
   const s = S(); const pos = nextScreenPos();
   if (act === 'present') { const bs = s.os.filter(o => o.t === 'button'); if (!bs.length) return toast('묶을 동작 버튼들을 선택하세요'); snap(); setSel([add({ t: 'button', k: 'b', p: bs.map(b => b.id), d: { act, sx: pos.sx, sy: pos.sy, text: '발표', seq: 'seq', pause: 1 } }).id]); }
   else if (act === 'sound') { const v = s.vals[0]; if (!v) return toast('소리로 바꿀 값을 하나 선택하세요'); snap(); setSel([add({ t: 'button', k: 'b', p: [v.id], d: { act, sx: pos.sx, sy: pos.sy, text: '소리: ' + valueName(v) } }).id]); }
-  else if (act === 'scroll') { if (s.pts.length !== 2) return toast('화면을 옮길 방향을 나타내는 두 점을 선택하세요'); snap(); setSel([add({ t: 'button', k: 'b', p: s.pts.map(o => o.id), d: { act, sx: pos.sx, sy: pos.sy, text: '화면 옮기기 ' + nm(s.pts[0].id) + '→' + nm(s.pts[1].id) } }).id]); }
+  else if (act === 'scroll') { if (s.pts.length !== 2 && s.pts.length !== 1) return toast('화면에 보여 줄 점 하나(또는 옮길 방향을 나타내는 두 점)를 선택하세요'); snap(); setSel([add({ t: 'button', k: 'b', p: s.pts.map(o => o.id), d: { act, sx: pos.sx, sy: pos.sy, text: s.pts.length === 1 ? '화면 이동: ' + nm(s.pts[0].id) : '화면 옮기기 ' + nm(s.pts[0].id) + '→' + nm(s.pts[1].id), mode: 'tl' } }).id]); }
   else if (act === 'url') { snap(); setSel([add({ t: 'button', k: 'b', p: [], d: { act, sx: pos.sx, sy: pos.sy, text: '웹 페이지 열기', url: 'https://' } }).id]); toast('속성에서 주소를 입력하세요'); }
 }
 function runButtonExt(o) {
   if (o.d.act === 'present') { runPresentation(o); return true; }
   if (o.d.act === 'sound') { soundToggle(o); return true; }
-  if (o.d.act === 'scroll') { const a = G[o.p[0]], b = G[o.p[1]]; if (a && b) { const A = toS(a), B = toS(b); scrollBy(B.x - A.x, B.y - A.y); } return true; }
+  if (o.d.act === 'scroll') { const a = G[o.p[0]], b = o.p.length > 1 ? G[o.p[1]] : null; if (a && o.p.length === 1) { const A = toS(a); const T = o.d.mode === 'center' ? { x: W / 2, y: H / 2 } : { x: 40, y: 40 }; scrollBy(T.x - A.x, T.y - A.y); } else if (a && b) { const A = toS(a), B = toS(b); scrollBy(B.x - A.x, B.y - A.y); } return true; } // 점 하나: GSP처럼 그 점을 화면 왼쪽 위(또는 가운데)로
   if (o.d.act === 'url') { if (!/^https?:\/\//.test(o.d.url || '') || o.d.url === 'https://') { toast('버튼 속성에 웹 주소를 입력하세요'); return true; } const a = el('a', { href: o.d.url, target: '_blank', rel: 'noopener' }); document.body.append(a); a.click(); a.remove(); return true; }
   return false;
 }
@@ -177,6 +177,7 @@ function propsExtra(list, one, body) {
     if (d.act === 'anim') { body.append(el('div', { class: 'row3' }, field('속도', el('select', { id: 'px-sp' }, [[0.25, '아주 느리게'], [0.5, '느리게'], [1, '보통'], [2, '빠르게'], [4, '아주 빠르게']].map(([v, l]) => el('option', { value: v, selected: (d.speed || 1) === v }, l)))), field('방향', el('select', { id: 'px-dir' }, el('option', { value: 1, selected: (d.dir || 1) === 1 }, '정방향'), el('option', { value: -1, selected: d.dir === -1 }, '역방향'))), el('label', { class: 'chk', style: 'align-self:end' }, el('input', { type: 'checkbox', id: 'px-once', checked: !!d.once }), '한 번만'))); fns.push(() => { d.speed = +$('#px-sp').value; d.dir = +$('#px-dir').value; d.once = $('#px-once').checked; }); }
     if (d.act === 'move') { body.append(field('이동 속도', el('select', { id: 'px-ms' }, [[0, '즉시'], [2, '느리게'], [6, '보통'], [15, '빠르게']].map(([v, l]) => el('option', { value: v, selected: (d.speed ?? 6) === v }, l))))); fns.push(() => { d.speed = +$('#px-ms').value; }); }
     if (d.act === 'present') { body.append(el('div', { class: 'row2' }, field('실행 방식', el('select', { id: 'px-sq' }, el('option', { value: 'seq', selected: d.seq === 'seq' }, '차례로'), el('option', { value: 'sim', selected: d.seq !== 'seq' }, '동시에'))), field('동작 사이 쉬는 시간 (초)', num('px-pa', d.pause ?? 1)))); fns.push(() => { d.seq = $('#px-sq').value; d.pause = Math.max(0, getNum('px-pa') || 0); }); }
+    if (d.act === 'scroll' && one.p.length === 1) { body.append(field('이동 방법', el('select', { id: 'px-sm' }, el('option', { value: 'tl', selected: d.mode !== 'center' }, '점이 화면 왼쪽 위로 오게'), el('option', { value: 'center', selected: d.mode === 'center' }, '점이 화면 가운데로 오게')))); fns.push(() => { d.mode = $('#px-sm').value; }); }
     if (d.act === 'url') { body.append(field('웹 주소', el('input', { id: 'px-url', value: d.url || 'https://' }))); fns.push(() => { d.url = $('#px-url').value.trim(); }); }
   }
   if (one && one.t === 'text') {

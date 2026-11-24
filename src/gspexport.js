@@ -43,6 +43,7 @@ GSPX.tokens = (expr) => {
     else if (t === 'x') toks.push(15);
     else if (t === '(') toks.push(11);
     else if (t === ')') toks.push(12);
+    else if (t === '-' && (!toks.length || (toks[toks.length - 1] >> 12) === 1 || (toks[toks.length - 1] >> 12) >= 2 && (toks[toks.length - 1] >> 12) !== 6 || toks[toks.length - 1] === 11)) toks.push(0x1005); // 단항 −
     else if ('+-*/^'.includes(t) && t.length === 1) toks.push(0x1000 + '+-*/^'.indexOf(t));
     else throw new Error('tok ' + t);
   }
@@ -109,6 +110,7 @@ GSPX.picBytes = (src, w, h) => { // 그림을 PNG 바이트로 (PNG가 아니면
     return { bytes, w, h };
   } catch (e) { return null; }
 };
+GSPX.unit = d => GSPX.rad(d) ? 0 : d.prefs.directed ? 2 : 1; // GSP 각 단위: 0 라디안, 1 도, 2 방향 있는 도
 GSPX.rad = d => !d.prefs.deg || d.objs.some(x => x.t === 'fplot' || (x.t === 'value' && x.k === 'func')); // 함수 그래프가 있으면 라디안
 function buildGSP() {
   stashPage(); const keep = doc; const W = new GSPX.W(); let skipped = 0, fixed = 0; GSPX.skips = [];
@@ -179,7 +181,7 @@ function buildGSP() {
             const pk = o.k, A = obj(o.p[0]), B = obj(o.p[1]);
             if (pk === 'mid' && o.p.length === 1 && A && A.t === 'segment') id = emit(1, 1, 11, par, o, lab(o, []), { e: 0x221 });
             else if (pk === 'int' && A && B) {
-              const sA = isStraight(A), sB = isStraight(B), cA = A.t === 'circle', cB = B.t === 'circle';
+              const sA = isStraight(A), sB = isStraight(B), cA = A.t === 'circle' || A.t === 'arc', cB = B.t === 'circle' || B.t === 'arc'; // 호는 원처럼 (GSP 11~14)
               let code = null, i = o.d.i || 0;
               if (sA && sB) code = 9;
               else if ((sA && cB) || (cA && sB)) { const L = sA ? A : B; if (L.k === 'perp' && GSPI.opt.perp) i = 1 - i; code = i ? 12 : 11; }
@@ -189,11 +191,18 @@ function buildGSP() {
             } else if (pk === 'on' && A) {
               const k = kOf(A) || (A.t === 'locus' ? 42 : A.t === 'fplot' ? 58 : 0); if (!k) throw 0;
               const b = new GSPX.B().u16(15).u16(k);
-              if (A.t === 'circle') { const a = (o.d.t || 0) * TAU; b.f64(Math.cos(a)).f64(-Math.sin(a)); }
+              if (A.t === 'circle') { const a = (o.d.t || 0) * TAU; b.f64(Math.cos(a)).f64(Math.sin(a)); }
               else if (A.t === 'fplot') { const lo = A.d.xmin ?? -10, hi = A.d.xmax ?? 10; b.f64(((o.d.t ?? 0) - lo) / ((hi - lo) || 1)); }
+              else if (A.isAxis) { const ga = G[A.id]; const L = ga ? Math.hypot(ga.b.x - ga.a.x, ga.b.y - ga.a.y) : 1; b.f64(0.5 + (o.d.t ?? 0) * L * PXCM / GSPI.AXIS_PX * (A.isAxis === 'y' ? -1 : 1)); }
               else b.f64(o.d.t ?? 0.5);
               id = emit(15, 1, 10, par, o, lab(o, [[2003, b.get()]]), { e: 0x221 });
             } else if (pk === 'plot' && o.d.xV == null && o.d.yV == null && !o.d.polar) id = emit(67, 1, 56, [P1(o.p[0])], o, lab(o, [[2003, new GSPX.B().u32(67).f64(o.d.x || 0).f64(o.d.y || 0).get()]]), { e: 0x221 });
+            else if (pk === 'plot' && !o.d.polar && (o.d.xV != null) !== (o.d.yV != null)) { // 한쪽만 값: 다른 쪽은 숨은 매개변수로
+              const num = o.d.xV != null ? o.d.y : o.d.x; const T = GSPX.tokens(String(+(+num || 0).toFixed(6)));
+              const pv = emit(0, 11, 79, [], { color: 'ink', hidden: true, d: { sx: 10, sy: 10, v: +num || 0 } }, [[2311, exprRec({ d: { sx: 10, sy: 10, v: +num || 0 } }, T.toks.length ? T.toks : [0], 'param')], [2008, Uint8Array.of(1, 0)], [2211, GSPX.rect({ d: { sx: 10, sy: 10 } })]], { hidden: 1 });
+              const xv = o.d.xV != null ? P1(o.d.xV) : pv, yv = o.d.yV != null ? P1(o.d.yV) : pv;
+              id = emit(69, 1, 56, [xv, yv, P1(o.p[0])], o, lab(o, []), { e: 0x221 });
+            }
             else if (pk === 'plot' && o.d.xV && o.d.yV && !o.d.polar) id = emit(69, 1, 56, [P1(o.d.xV), P1(o.d.yV), P1(o.p[0])], o, lab(o, []), { e: 0x221 });
             else if (pk === 'xf') id = null;
             if (id == null && pk !== 'xf') throw 0;
@@ -227,11 +236,18 @@ function buildGSP() {
           else if (id == null && o.t === 'polygon' && o.k === 'pts') id = emit(8, 4, GSPX.polyK(o.p.length), par, o, lab(o, []), { interior: true });
           else if (id == null && o.t === 'cinterior') id = emit(10, 5, 16, par, o, lab(o, []), { interior: true });
           else if (id == null && o.t === 'locus') {
-            const [drv, trc] = o.p; const D = obj(drv); if (!D || D.k !== 'on') throw 0;
+            const [drv, trc] = o.p; const D = obj(drv);
+            if (D && D.t === 'value' && o.p.length === 2) { // 매개변수로 움직이는 자취 (GSP 97)
+              const chain = [...descendants([drv])].filter(x => x !== drv && x !== trc && ancestors([trc]).has(x)); const ordered = doc.objs.filter(x => chain.includes(x.id)).map(x => P1(x.id));
+              let t0 = D.d.min ?? 0, t1 = D.d.max ?? 10; if (o.d.dom) { const sp = t1 - t0; [t0, t1] = [t0 + sp * o.d.dom[0], t0 + sp * o.d.dom[1]]; }
+              id = emit(97, 6, 42, [P1(trc), P1(drv), ...ordered, P1(trc)], o, [[2306, new GSPX.B().f64(t0).f64(t1).u32(o.d.n || 500).u16(4).u32(0).zeros(6).u16(1).zeros(6).get()]]);
+            } else {
+            if (!D || D.k !== 'on') throw 0;
             const path = obj(D.p[0]); const chain = [...descendants([drv])].filter(x => x !== drv && ancestors([trc]).has(x) || x === trc);
             const ordered = doc.objs.filter(x => chain.includes(x.id)).map(x => P1(x.id));
             const dom = path.t === 'circle' ? [0, TAU] : [0, 1];
             id = emit(35, 6, 42, [P1(trc), P1(path.id), P1(drv), ...ordered], o, [[2306, new GSPX.B().f64(dom[0]).f64(dom[1]).u32(o.d.n || 500).u16(4).u32(0).zeros(6).u16(1).zeros(6).get()]]);
+            }
           } else if (id == null && o.t === 'fplot' && o.k === 'fn') {
             const fn = obj(o.d.fn || o.p[1]); if (!fn || (fn.d.form && fn.d.form !== 'yx')) throw 0;
             id = emit(72, 6, 58, [P1(fn.id), P1(o.p[0])], o, [[2306, new GSPX.B().f64(o.d.xmin ?? -10).f64(o.d.xmax ?? 10).u32(o.d.n || 750).u16(0).u32(3).zeros(6).u16(1).zeros(6).get()]]);
@@ -266,6 +282,25 @@ function buildGSP() {
               if (par.length !== 2) throw 0; const sp = GSPX.MOVESP[o.d.speed ?? 6] ?? 1;
               id = emit(62, 10, 23, par, o, [[2310, new GSPX.B().hex('06090000').u32(0x18).u32(0x0c).u16(3).u16(sp).zeros(4).i16(sx).i16(sy).get()], [2005, l], [2008, Uint8Array.of(1, 0)]]);
             }
+          } else if (id == null && o.t === 'button' && (o.d.act === 'scroll' || o.d.act === 'present' || o.d.act === 'url')) {
+            const sx = o.d.sx || 10, sy = o.d.sy || 10, l = GSPX.label({ label: o.d.text || '버튼', showLabel: true }, 6);
+            const r2310 = (ty, sub, extra = 0) => new GSPX.B().hex('06090000').u32(0x18).u32(0x0c).u16(ty).u16(sub).u16(extra).u16(0).i16(sx).i16(sy).get();
+            if (o.d.act === 'scroll') { if (!(par[0] > 0)) throw 0; id = emit(62, 10, 23, [par[0]], o, [[2310, r2310(4, o.d.mode === 'center' ? 1 : 0)], [2005, l], [2008, Uint8Array.of(1, 0)]]); }
+            else if (o.d.act === 'present') { const p = par.filter(v => v > 0); if (!p.length) throw 0; const seq = o.d.seq === 'seq'; id = emit(62, 10, 23, p, o, [[2310, r2310(7, seq ? 1 : 0, seq ? Math.round(o.d.pause ?? 1) : 600)], [2005, l], [2008, Uint8Array.of(1, 0)]]); }
+            else { // 웹 주소 바로 가기 (종류 6)
+              const u = GSPX.utf8(o.d.url || ''); const b = new GSPX.B().hex('06090000').u32(0).u32(0x0c).u16(6).u16(0).zeros(4).i16(sx).i16(sy).u16(u.length).bytes(u).u8(0); while (b.a.length % 4) b.u8(0);
+              const r = b.get(); new DataView(r.buffer).setUint32(4, r.length, true); const w = 16 + 8 * String(o.d.text || '').length;
+              id = emit(0, 10, 23, [], o, [[2310, r], [2005, l], [2008, Uint8Array.of(1, 0)], [2210, new GSPX.B().i16(sx).i16(sy).i16(sx + w).i16(sy + 19).get()]]);
+            }
+          } else if (id == null && o.t === 'table' && o.k === 'tab') { // 표 (GSP 91): 칸 내용은 글자로
+            const p = o.p.map(P1); if (!p.length || p.some(v => !(v > 0))) throw 0;
+            const T = s => { const u = GSPX.utf8(String(s)); return '<T' + u.length.toString(16).toUpperCase() + 'x' + String(s) + '>'; };
+            const cell = v => '<H' + T(cellStr(v)) + '>';
+            const heads = tableHeads(o); const rows = (o.d.rows || []).concat([o.p.map(id => cellVal(id))]);
+            const mk = '0'.repeat(heads.length + 2) + heads.map(h => '<SS2' + T(h) + '>').join('') + rows.map(r => '0' + r.map(cell).join('')).join('');
+            const mb = GSPX.utf8(mk); const b = new GSPX.B().hex('0d090000').u32(0).u32(0x10).i16(o.d.sx || 10).i16(o.d.sy || 10).u16(heads.length + 3).u16(rows.length).u16(1).zeros(6).bytes(mb).u8(0); if (b.a.length % 2) b.u8(0);
+            const r = b.get(); new DataView(r.buffer).setUint32(4, r.length, true);
+            id = emit(91, 17, 83, p, o, [[2317, r], [2008, Uint8Array.of(1, 0)]]);
           } else if (id == null && o.t === 'iter' && o.k === 'geo') {
             const pre = o.d.pre || [], maps = o.d.maps || []; const chain = iterChain(o).filter(c => P1(c.id) > 0);
             const dv = o.d.depthV != null ? P1(o.d.depthV) : null; if (o.d.depthV != null && !(dv > 0)) throw 0;
@@ -292,14 +327,14 @@ function buildGSP() {
           if (id == null) throw 0;
         } catch (err) {
           // 대신 고정된 점으로 (점이라면) — 아니면 건너뜀
-          if (o.t === 'point' && g && isFinite(g.x)) { id = freePt(o, g.x, g.y); fixed++; } else { id = null; skipped++; (GSPX.skips = GSPX.skips || []).push(o.t + "/" + o.k + ":" + o.p.map(P1).join(",")); }
+          if (o.t === "point" && g && isFinite(g.x)) { id = freePt(o, g.x, g.y); fixed++; (GSPX.skips = GSPX.skips || []).push("fixed:" + o.k + "<" + o.p.map(id => obj(id) ? obj(id).t + "/" + obj(id).k : "?").join(",") + ">"); } else { id = null; skipped++; (GSPX.skips = GSPX.skips || []).push(o.t + "/" + o.k + (o.k === "xf" ? "." + (o.d.xf || {}).type : "") + "<" + o.p.map(id => obj(id) ? obj(id).t + "/" + obj(id).k + (G[id] ? "" : "!") : "?").join(",") + ">" + (G[o.id] ? "" : "(undef)")); }
         }
         if (id != null) idx.set(o.id, id);
       }
       if (tool) { // 사용자 도구 구역: 902(종류 2), 이름, 객체, 903
         const gi = (pg.givens || []).map(id => idx.get(id)); if (!gi.length || gi.some(v => !(v > 0))) throw new Error('givens');
         W.raw(GSPX.b64(GSPX_T.t902));
-        W.rec(1002, new GSPX.B().zeros(16).u16(GSPX.rad(doc) ? 0 : 1).u16(1).zeros(4).u32(recs.length).zeros(8).get()); // 도구 머리 (페이지의 1000 과 같은 꼴)
+        W.rec(1002, new GSPX.B().zeros(16).u16(GSPX.unit(doc)).u16(1).zeros(4).u32(recs.length).zeros(8).get()); // 도구 머리 (페이지의 1000 과 같은 꼴)
         W.rec(1100, new GSPX.B().bytes(GSPX.utf8(pg.name || '도구')).u8(0).get());
         W.rec(1201, new GSPX.B().hex('010054696d6573204e657720526f6d616e000000').get()); W.rec(1203, new GSPX.B().hex('0000100001000100010001000100010001000100').get());
         for (const r of recs) { W.rec(2000, r.h); for (const [t, u] of r.rs) W.rec(t, u); W.rec(2007, new Uint8Array(0)); }
@@ -307,10 +342,10 @@ function buildGSP() {
         W.rec(1003, new Uint8Array(0)); W.rec(903, new Uint8Array(0)); return;
       }
       // 페이지 머리글
-      const p902 = GSPX.b64(GSPX_T.p902), p1000 = GSPX.b64(GSPX_T.p1000); new DataView(p1000.buffer).setUint32(8 + 24, recs.length, true); new DataView(p1000.buffer).setUint16(8 + 16, GSPX.rad(doc) ? 0 : 1, true); new DataView(p1000.buffer).setUint16(8 + 8, 0x4000 + pi * 0x0731 + 17, true); // @16 각 단위(0 라디안, 1 도), @8 페이지마다 다른 값
+      const p902 = GSPX.b64(GSPX_T.p902), p1000 = GSPX.b64(GSPX_T.p1000); new DataView(p1000.buffer).setUint32(8 + 24, recs.length, true); new DataView(p1000.buffer).setUint16(8 + 16, GSPX.unit(doc), true); new DataView(p1000.buffer).setUint16(8 + 8, 0x4000 + pi * 0x0731 + 17, true); // @16 각 단위(0 라디안, 1 도), @8 페이지마다 다른 값
       W.raw(p902); W.raw(p1000);
       const nm = GSPX.utf8(pg.name || ('페이지 ' + (pi + 1))); W.rec(1100, new GSPX.B().bytes(nm).u8(0).get());
-      const prest = GSPX.b64(GSPX_T.prest); GSPX.setPref(prest, 10042, GSPX.rad(doc) ? 0 : 1); W.raw(prest);
+      const prest = GSPX.b64(GSPX_T.prest); GSPX.setPref(prest, 10042, GSPX.unit(doc)); W.raw(prest);
       for (const r of recs) { W.rec(2000, r.h); for (const [t, u] of r.rs) W.rec(t, u); W.rec(2007, new Uint8Array(0)); }
       if (csFirst) W.rec(9005, new GSPX.B().u32(csFirst).get());
       W.rec(1001, new Uint8Array(0)); W.rec(903, new Uint8Array(0));

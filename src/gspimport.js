@@ -38,7 +38,7 @@ GSPI.expr = (toks, ref) => {
   for (const t of toks) {
     const hi = t >> 12, lo = t & 0xfff;
     if (hi === 0) { s += lo <= 9 ? String(lo) : lo === 10 ? '.' : lo === 11 ? '(' : lo === 12 ? ')' : lo === 13 ? ' pi ' : lo === 14 ? ' e ' : lo === 15 ? ' x ' : ''; }
-    else if (hi === 1) s += ' ' + ('+-*/^'[lo] || '+') + ' ';
+    else if (hi === 1) s += lo === 5 ? ' -' : ' ' + ('+-*/^'[lo] || '+') + ' '; // 5: 부호 바꾸기(단항 −)
     else if (hi === 2) s += ' ' + (GSPI.FNS[lo] || 'abs') + '(';
     else if (hi === 6) { const r = ref(lo); if (r == null) throw new Error('ref'); s += ' #' + r + ' '; }
     else if (hi === 7) { const r = ref(lo); if (r == null) throw new Error('ref'); s += ' #' + r + ' ('; }
@@ -133,7 +133,8 @@ GSPI.build = (F, sec, links) => {
           if (s.k === 19 || s.k === 59) { const r = s.rec[2300]; if (!r) break; const q = s.rec[2200]; const sx = q ? dv.getInt16(q.p, true) : dv.getInt16(r.p + 12, true), sy = q ? dv.getInt16(q.p + 2, true) : dv.getInt16(r.p + 14, true); id = text(s, GSPI.markup(u8, r.p + 18, r.p + r.len), sx, sy); obj(id).hidden = !!(s.fl & 1); if (q) { const w = dv.getInt16(q.p + 4, true) - sx; if (w > 60 && obj(id).d.text.length > 30) obj(id).d.wrap = w + 24; } break; }
           const T = toks(s); if (!T) break;
           if (s.k === 57) { id = valAt(s, 'func', [], { expr: GSPI.expr(T.t, () => null), form: 'yx', notation: 'f' }); break; }
-          const v = D(T.r, T.r.len - 2 * T.n - 8); id = valAt(s, 'param', [], { v: isFinite(v) ? v : 1, min: -10, max: 10, step: 0.1, unit: 'none' }); break;
+          let v = D(T.r, T.r.len - 2 * T.n - 8); try { const e = GSPI.expr(T.t, () => null); if (/^[\d.\s+\-*/^()pie]+$/.test(e) && /\d|pi/.test(e)) { const x = Function('return (' + e.replace(/\^/g, '**').replace(/\bpi\b/g, 'Math.PI').replace(/\be\b/g, 'Math.E') + ')')(); if (isFinite(x)) v = x; } } catch (er) { } // 값은 식(토큰)이 기준
+          id = valAt(s, 'param', [], { v: isFinite(v) ? v : 1, min: -10, max: 10, step: 0.1, unit: 'none' }); break;
         }
         case 76: case 89: { // 반복: [깊이 값], 원상들, 사상별 상들, 그 뒤 연쇄 객체
           const r = s.rec[2314]; const npre = r ? dv.getUint16(r.p + 6, true) || 1 : 1, nm = r ? dv.getUint32(r.p + 8, true) || 1 : 1, depth = r ? dv.getUint32(r.p + 16, true) : 3;
@@ -163,13 +164,33 @@ GSPI.build = (F, sec, links) => {
         }
         case 15: {
           const r = s.rec[2003], path = po(0); let t = D(r, 4);
-          if (path.t === 'circle' || path.t === 'cinterior') { const c = D(r, 4), sn = D(r, 12); t = mod(Math.atan2(-sn, c) / TAU, 1); }
+          if (path.t === 'circle' || path.t === 'cinterior') { const c = D(r, 4), sn = D(r, 12); t = mod(Math.atan2(sn, c) / TAU, 1); }
+          else if (path.isAxis) { const q = obj(path.p[1]); const u = (q && q.d.u) || (q && obj(q.p[0]) && obj(q.p[0]).d.u) || 1; t = (t - 0.5) * GSPI.AXIS_PX / (u * PXCM) * (path.isAxis === 'y' ? -1 : 1); } // y축은 화면 아래쪽이 + 방향 // 축 위의 점: 원점에서 화면 200px 범위를 0~1로 잰 값
           else if (path.t === 'fplot') { const lo = path.d.xmin ?? -10, hi = path.d.xmax ?? 10; t = lo + t * (hi - lo); }
           id = mkOn(P[0], isFinite(t) ? t : 0.5); break;
         }
-        case 80: id = mkArcCPP(P[0], P[1], P[2]); break; // 중심과 두 점으로 정한 호
+        case 80: id = mkArcCPP(P[0], P[1], P[2]); break; // 첫 점에서 둘째 점까지 반시계 방향 (GSP 와 같음) // 중심과 두 점으로 정한 호
         case 81: id = mkArc3(P[0], P[1], P[2]); break; // 세 점을 지나는 호
         case 35: id = mkLocus(P[2], P[0]); break;
+        case 97: { // 매개변수로 움직이는 자취: [자취를 그릴 객체, 매개변수, 연쇄…]
+          const prm = po(1); if (!prm || prm.t !== 'value') break; const r = s.rec[2306]; id = mkLocus(P[1], P[0]);
+          if (r && r.len >= 20) { let a = D(r, 0), b = D(r, 8); if (isFinite(a) && isFinite(b) && b > a) { if (prm.k === 'param' && (a < (prm.d.min ?? 0) || b > (prm.d.max ?? 10))) { prm.d.min = Math.min(prm.d.min ?? 0, a); prm.d.max = Math.max(prm.d.max ?? 10, b); } const lo = prm.d.min ?? 0, sp = (prm.d.max ?? 10) - lo; if (sp > 0) obj(id).d.dom = [(a - lo) / sp, (b - lo) / sp]; } obj(id).d.n = dv.getUint32(r.p + 16, true) || undefined; }
+          break;
+        }
+        case 91: { // 표: 칸 글자를 읽어 고정 행으로 (마지막 행은 실시간 값)
+          const r = s.rec[2317]; const p = P.filter(v => v != null); if (!r || !p.length) break;
+          const sx = dv.getInt16(r.p + 12, true), sy = dv.getInt16(r.p + 14, true); const nc = p.length;
+          const txt = GSPI.dec(u8.slice(r.p + 30, r.p + r.len)).replace(/\0[\s\S]*$/, '');
+          const groups = []; let dep = 0, cur = null, row = null; const rowsTxt = [];
+          for (let k = 0; k < txt.length; k++) { const ch = txt[k];
+            if (dep === 0 && ch === '0') { row = []; rowsTxt.push(row); continue; }
+            if (ch === '<') { if (dep === 0) cur = ''; dep++; if (txt[k + 1] === 'T') { const m = /^<T([0-9A-F]+)x/.exec(txt.slice(k)); if (m) { const n = parseInt(m[1], 16); const start = k + m[0].length; const bytes = GSPX.utf8(txt.slice(start)); const t = new TextDecoder().decode(bytes.slice(0, n)); cur += t; k = start + t.length - 1; continue; } } continue; }
+            if (ch === '>') { dep--; if (dep === 0 && row) row.push(cur); continue; }
+          }
+          const data = rowsTxt.filter(rw => rw.length === nc); const body = data.slice(1, -1); // 첫 행은 머리글, 마지막 행은 실시간
+          const rows = body.map(rw => rw.map(c => { const v = parseFloat(String(c).replace(/[−–]/g, '-')); return isFinite(v) ? v : c; }));
+          id = add({ t: 'table', k: 'tab', p, d: { sx, sy, rows, live: true } }).id; map[i] = id; return;
+        }
         // 변환 (원본 종류를 그대로 따름)
         case 16: id = mkXf(P[0], { type: 'tr', vec: [P[1], P[2]] }); break;
         case 21: { const r = s.rec[2003]; id = mkXf(P[0], { type: 'tr', dist: D(r, 32) / PXCM, ang: D(r, 20) }); break; }
@@ -190,7 +211,7 @@ GSPI.build = (F, sec, links) => {
           if (O == null || U == null) { map[i] = -1; return; }
           let Q = pc === 52 ? U : pc === 55 && pend.V != null ? pend.V : null;
           if (Q == null) { Q = mkXf(U, { type: 'rot', c: O, ang: 90 }); const q = obj(Q); q.hidden = true; q.showLabel = false; q.label = ''; }
-          const L = mkStraight('line', O, Q); const l = obj(L); if (!l) { map[i] = -1; return; } l.hidden = true; l.isAxis = true; map[i] = L; return;
+          const L = mkStraight('line', O, Q); const l = obj(L); if (!l) { map[i] = -1; return; } l.hidden = true; l.isAxis = pc === 52 ? 'x' : 'y'; map[i] = L; return;
         }
         case 61: {
           const O = pend.O, U = pend.U; if (O == null || U == null) break;
@@ -226,12 +247,15 @@ GSPI.build = (F, sec, links) => {
         case 62: {
           const r = s.rec[2310]; if (!r || r.len < 24) break;
           const ty = dv.getUint16(r.p + 12, true), sub = dv.getUint16(r.p + 14, true);
-          const sx = dv.getInt16(r.p + r.len - 4, true), sy = dv.getInt16(r.p + r.len - 2, true);
+          const sx = dv.getInt16(r.p + 20, true), sy = dv.getInt16(r.p + 22, true);
           const tmp = {}; label(s, tmp); const txt = tmp.label || '버튼';
           if (ty === 5) { id = add({ t: 'button', k: 'b', p: [], d: { act: 'link', sx, sy, text: txt } }).id; links.push({ id, page: sub }); }
           else if (ty === 1 && sub !== 3) id = add({ t: 'button', k: 'b', p: P.slice(), d: { act: 'hide', sx, sy, text: txt } }).id;
           else if (ty === 2) id = add({ t: 'button', k: 'b', p: P.filter(v => v != null), d: { act: 'anim', sx, sy, text: txt } }).id;
           else if (ty === 3 && P.length === 2 && P.every(v => v != null)) id = add({ t: 'button', k: 'b', p: P.slice(), d: { act: 'move', sx, sy, text: txt, speed: [2, 6, 15, 0][sub] ?? 6 } }).id;
+          else if (ty === 4 && P[0] != null) id = add({ t: 'button', k: 'b', p: [P[0]], d: { act: 'scroll', sx, sy, text: txt, mode: sub === 1 ? 'center' : 'tl' } }).id;
+          else if (ty === 6 && r.len >= 26) { const n = dv.getUint16(r.p + 24, true); const url = GSPI.dec(u8.slice(r.p + 26, r.p + 26 + Math.min(n, r.len - 26))).replace(/\0.*$/, ''); id = add({ t: 'button', k: 'b', p: [], d: { act: 'url', sx, sy, text: txt, url } }).id; }
+          else if (ty === 7) { const p = P.filter(v => v != null && obj(v) && obj(v).t === 'button'); if (p.length) id = add({ t: 'button', k: 'b', p, d: { act: 'present', sx, sy, text: txt, seq: sub === 1 ? 'seq' : 'sim', pause: sub === 1 ? dv.getUint16(r.p + 16, true) : 1 } }).id; }
           if (id != null) obj(id).hidden = !!(s.fl & 1);
           map[i] = id; if (id == null) skipped++; return;
         }
@@ -246,6 +270,7 @@ GSPI.build = (F, sec, links) => {
   return skipped;
 };
 /* 교점 번호 보정: GSP에서 보이던 교점이 여기서 정의되지 않으면(호·선분 밖을 고른 경우) 다른 교점으로 바꿔 본다 */
+GSPI.AXIS_PX = 200;
 GSPI.fixInts = () => {
   recompute();
   for (const o of doc.objs) {
@@ -263,7 +288,7 @@ async function importGSPFile(file) {
   try {
     for (const sec of F.secs) {
       if (sec.type !== 1 && sec.type !== 2) continue;
-      doc = newDoc(); doc.prefs.autoLabel = false; reindex(); sel = []; if (sec.angle === 0) doc.prefs.deg = false; else if (sec.angle >= 1) doc.prefs.deg = true;
+      doc = newDoc(); doc.prefs.autoLabel = false; reindex(); sel = []; if (sec.angle === 0) doc.prefs.deg = false; else if (sec.angle >= 1) { doc.prefs.deg = true; doc.prefs.directed = sec.angle === 2; } // 2: 방향 있는 도
       const L = []; skipped += GSPI.build(F, sec, L); GSPI.fixInts(); if (sec.scroll) doc.objs.forEach(o => { if (o.d && o.d.sx != null) { o.d.sx -= sec.scroll.x; o.d.sy -= sec.scroll.y; } }); // 글·값·버튼 위치는 화면 기준
       doc.prefs.autoLabel = true;
       if (sec.type === 1) { pages.push({ name: sec.name || '페이지 ' + (pages.length + 1), doc, view: { ox: -(sec.scroll ? sec.scroll.x : 0), oy: -(sec.scroll ? sec.scroll.y : 0), s: PXCM } }); links.push(L); }

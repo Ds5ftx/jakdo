@@ -264,7 +264,7 @@ const MENUS = [
       { label: '페이지 이동', sub: () => { const t = linkTargets(); return t.length ? t.map(p => ({ label: p.name, run: () => makeLinkButton(p.id) })) : [{ label: '다른 페이지가 없습니다', en: () => false, run: () => { } }]; } },
       { label: '발표 (버튼 묶기)', run: () => makeButton2('present'), en: () => S().os.some(o => o.t === 'button') },
       { label: '소리', run: () => makeButton2('sound'), en: () => S().n === 1 && S().vals.length === 1 },
-      { label: '화면 옮기기 (두 점)', run: () => makeButton2('scroll'), en: () => S().n === 2 && S().pts.length === 2 },
+      { label: '화면 이동 (점 하나, 또는 방향을 나타내는 두 점)', run: () => makeButton2('scroll'), en: () => (S().n === 2 && S().pts.length === 2) || (S().n === 1 && S().pts.length === 1) },
       { label: '웹 주소 열기', run: () => makeButton2('url') },
       { label: '이동 (자유점 → 도착점)', run: () => makeButton('move'), en: () => { const s = S(); return s.n === 2 && s.pts.length === 2 && s.pts[0].k === 'free'; } },
     ] },
