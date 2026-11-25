@@ -9,14 +9,15 @@ GSPX.styleTables = (recs) => {
   const fontIdx = n => { let i = fonts.findIndex(f => f[0] === n); if (i < 0) { fonts.push([n, 1]); i = fonts.length - 1; } return i; };
   const bits = (c) => GSPX.rgb(c).map(v => v >= 128); // 글자색 → 5·6·7 번 칸(R·G·B)
   const want = (o) => {
-    if (!o) return null; let size, fam, g, c;
-    if (o.t === 'text') { size = o.d.size || 15; fam = o.d.font || 'sans'; g = o.d.gsty; c = o.color; }
+    if (!o) return null; let size, fam, g, c, bold = false;
+    if (o.t === 'text') { size = o.d.size || 15; fam = o.d.font || 'sans'; g = o.d.gsty; c = o.color; bold = !!o.d.bold; }
     else if (o.t === 'value') { if (!o.d.size && !o.d.gsty) return null; size = o.d.size || 14; fam = o.d.font || 'sans'; g = o.d.gsty; c = o.color; }
     else if (o.t === 'button') { g = o.d.gsty; size = g ? g.pt : 14; fam = g ? GSPI.fam(g.f) : 'sans'; c = 'ink'; }
-    else if (o.lf && o.lf.size) { size = o.lf.size; fam = o.lf.font || 'serif'; g = o.gsty; c = o.lf.color || 'ink'; }
+    else if (o.lf && o.lf.size) { size = o.lf.size; fam = o.lf.font || 'serif'; g = o.gsty; c = o.lf.color || 'ink'; bold = !!o.lf.bold; }
     else return null;
     const pt = Math.max(6, Math.round(size)); const raw = g && g.pt === pt && GSPI.fam(g.f) === fam ? g.raw.slice() : [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0];
-    bits(c).forEach((on, i) => { const k = 5 + i; raw[2 * k] = on ? 0 : 1; raw[2 * k + 1] = on ? 1 : 0; });
+    GSPX.rgb(c).forEach((ch, i) => { const k = 5 + i, v = Math.max(1, Math.round(ch * 256 / 255)); raw[2 * k] = v & 255; raw[2 * k + 1] = v >> 8; }); // 글자색 R·G·B (0 → 1, 255 → 256)
+    { const b0 = (raw[0] | (raw[1] << 8)) & ~2 | (bold ? 2 : 0); raw[0] = (b0 || 1) & 255; raw[1] = (b0 || 1) >> 8; }
     const fname = g && GSPI.fam(g.f) === fam ? g.f : fam === 'serif' ? 'Times New Roman' : fam === 'mono' ? 'Courier New' : '굴림';
     return { f: fontIdx(fname), pt, raw };
   };
@@ -107,16 +108,14 @@ GSPX.label = (o, type = 7) => {
   b.u8(0); if (b.a.length % 2) b.u8(0); return b.get();
 };
 GSPX.markup = (text, maxw = 640) => {
-  // 문단은 <0>으로, 문단 안의 자동 줄바꿈은 <H…> 줄로 (GSP는 저장된 줄 그대로 그린다)
+  // <VL …> 의 자식 하나가 한 줄: 빈 줄은 <0>, 긴 줄은 너비에 맞춰 여러 줄로, **굵게** 는 <SW2 …> (불러오기와 같은 규칙)
   const cw = ch => /[\u1100-\uffff]/.test(ch) ? 13 : /[A-Z0-9mw]/.test(ch) ? 8 : 6.5;
-  const wrap = ln => { const out = []; let cur = '', w = 0; for (const word of ln.split(/(?<=\s)/)) { const ww = [...word].reduce((a, c) => a + cw(c), 0); if (cur && w + ww > maxw) { out.push(cur); cur = ''; w = 0; } cur += word; w += ww; } out.push(cur); return out; };
+  const wrap = ln => { const out = []; let cur = '', w = 0; for (const word of ln.split(/(?<=\s)/)) { const ww = [...word.replace(/\*\*/g, '')].reduce((a, c) => a + cw(c), 0); if (cur && w + ww > maxw) { out.push(cur); cur = ''; w = 0; } cur += word; w += ww; } out.push(cur); return out; };
   const enc = s => { const u = GSPX.utf8(s); return [...GSPX.utf8('<T' + u.length.toString(16).toUpperCase() + 'x'), ...u, 62]; };
-  const out = [...GSPX.utf8('<VL')];
-  String(text || '').replace(/\r/g, '').split('\n').forEach((ln, i) => {
-    if (i) out.push(...GSPX.utf8('<0>'));
-    if (!ln) return; const parts = wrap(ln);
-    if (parts.length === 1) out.push(...enc(ln)); else parts.forEach(p => out.push(...GSPX.utf8('<H'), ...enc(p), 62));
-  });
+  const out = [...GSPX.utf8('<VL')]; let bold = false;
+  const line = p => { const segs = p.split('**'); if (segs.length === 1 && !bold) { out.push(...enc(p)); return; }
+    out.push(...GSPX.utf8('<H')); segs.forEach((sg, k) => { if (k) bold = !bold; if (!sg) return; if (bold) out.push(...GSPX.utf8('<SW2'), ...enc(sg), 62); else out.push(...enc(sg)); }); out.push(62); };
+  String(text || '').replace(/\r/g, '').split('\n').forEach(ln => { if (!ln) { out.push(...GSPX.utf8('<0>')); return; } wrap(ln).forEach(line); });
   out.push(62); return out;
 };
 GSPX.capRec = (mk, sx, sy) => { const tail = mk.length % 2 ? 3 : 4; return new GSPX.B().hex('fc080000').u32(18 + mk.length + tail - 2).u32(4).i16(sx).i16(sy).u16(mk.length).bytes(mk).zeros(tail).get(); };
@@ -197,7 +196,8 @@ function buildGSP() {
       const kOf = o => o.t === 'polygon' ? GSPX.polyK(o.p.length) : (GSPX.CK[o.t] || [0, 0])[1];
       const cOf = o => o.t === 'polygon' ? 4 : (GSPX.CK[o.t] || [0, 0])[0];
       // 가져온 좌표축(숨은 보조 직선)은 GSP 의 축 객체(58)로 되돌린다
-      const axisAux = new Set(); doc.objs.forEach(l => { if (!l.isAxis) return; axisAux.add(l.id); const q = obj(l.p[1]); if (q && q.k === 'xf' && q.hidden && doc.objs.every(c => !c.p.includes(q.id) || c.isAxis)) axisAux.add(q.id); });
+      const axisAux = new Set(); doc.objs.forEach(q => { if (q.t === 'point' && q.d && q.d.pich && q.hidden && doc.objs.every(c => !c.p.includes(q.id) || (c.t === 'picture' && c.k === 'pts'))) axisAux.add(q.id); }); // 그림의 보조 꼭짓점: 그림은 자기 행렬로 저장되므로 따로 쓰지 않음
+      doc.objs.forEach(l => { if (!l.isAxis) return; axisAux.add(l.id); const q = obj(l.p[1]); if (q && q.k === 'xf' && q.hidden && doc.objs.every(c => !c.p.includes(q.id) || c.isAxis)) axisAux.add(q.id); });
       for (const o of doc.objs) {
         let id = null; const g = G[o.id];
         if (axisAux.has(o.id)) continue;
@@ -327,8 +327,8 @@ function buildGSP() {
             const hdr = { color: '#ff0000', hidden: o.hidden };
             id = emit(0, 16, 78, [], hdr, [[2316, new GSPX.B().u32(pb.w).u32(pb.h).u32(pb.w).u32(pb.h).get()], [2216, new GSPX.B().f64((x1 - x0) / pb.w).f64((x2 - x0) / pb.h).f64(x0).f64((y1 - y0) / pb.w).f64((y2 - y0) / pb.h).f64(y0).get()], [8004, new GSPX.B().u16(k).get()]], { e: 0x121, pic: true });
           } else if (id == null && o.t === 'text') {
-            const txt = String(o.d.text || '').replace(/\{#\d+\}/g, '').replace(/[*_]{1,2}([^*_]+)[*_]{1,2}/g, '$1');
-            const mk = GSPX.markup(txt, o.d.wrap || 640); const sx = o.d.sx || 10, sy = o.d.sy || 10;
+            const txt = String(o.d.text || '').replace(/\{#\d+\}/g, '');
+            const mk = GSPX.markup(txt, o.d.wrap || (txt.includes('\n') ? 1e9 : 640)); const sx = o.d.sx || 10, sy = o.d.sy || 10;
             const tail = mk.length % 2 ? 3 : 4; const b = new GSPX.B().hex('fc080000').u32(18 + mk.length + tail - 2).u32(4).i16(sx).i16(sy).u16(mk.length).bytes(mk).zeros(tail);
             const lines = txt.split('\n'); const ww = o.d.wrap || 640; const w = Math.min(ww, Math.max(40, ...lines.map(l => l.length * 9))); const nl = lines.reduce((a, l) => a + Math.max(1, Math.ceil(l.length * 8 / ww)), 0); const hgt = nl * 18 + 6;
             id = emit(0, 0, 19, [], o, [[2300, b.get()], [2008, Uint8Array.of(0, 0)], [2200, new GSPX.B().i16(sx).i16(sy).i16(sx + w).i16(sy + hgt).get()]]);
