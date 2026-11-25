@@ -215,7 +215,13 @@ function drawPicture(o, g, selected, hover) {
   ctx.drawImage(im, 0, 0); ctx.restore();
   if (selected || hover) { ctx.save(); ctx.strokeStyle = selected ? THEME.sel : THEME.hover; ctx.lineWidth = 2; ctx.setLineDash([5, 4]); const D = { x: B.x + Cc.x - A.x, y: B.y + Cc.y - A.y }; ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.lineTo(D.x, D.y); ctx.lineTo(Cc.x, Cc.y); ctx.closePath(); ctx.stroke(); ctx.restore(); }
 }
-function insidePicture(g, P) { const w = toW(P.x, P.y), u = vsub(g.TR, g.TL), v = vsub(g.BL, g.TL), q = vsub(w, g.TL), det = vcross(u, v); if (Math.abs(det) < 1e-12) return false; const a = vcross(q, v) / det, b = vcross(u, q) / det; return a >= 0 && a <= 1 && b >= 0 && b <= 1; }
+function insideMesh(g, P) { // 사용자 변환으로 옮긴 그림: 실제로 그려지는 그물 칸 안인지
+  const w = toW(P.x, P.y), M = g.mesh, n = g.n; if (!M) return false;
+  const inTri = (a, b, c) => { const d1 = vcross(vsub(b, a), vsub(w, a)), d2 = vcross(vsub(c, b), vsub(w, b)), d3 = vcross(vsub(a, c), vsub(w, c)); return (d1 >= 0 && d2 >= 0 && d3 >= 0) || (d1 <= 0 && d2 <= 0 && d3 <= 0); };
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) { const a = M[j][i], b = M[j][i + 1], c = M[j + 1][i + 1], d = M[j + 1][i]; if (a && b && c && d && (inTri(a, b, c) || inTri(a, c, d))) return true; }
+  return false;
+}
+function insidePicture(g, P) { if (g && g.mesh) return insideMesh(g, P); if (!g || !g.TL || !g.TR || !g.BL) return false; const w = toW(P.x, P.y), u = vsub(g.TR, g.TL), v = vsub(g.BL, g.TL), q = vsub(w, g.TL), det = vcross(u, v); if (Math.abs(det) < 1e-12) return false; const a = vcross(q, v) / det, b = vcross(u, q) / det; return a >= 0 && a <= 1 && b >= 0 && b <= 1; }
 function importPicture(file) {
   if (!file || !/^image\//.test(file.type)) return toast('그림 파일을 고르세요');
   const r = new FileReader(); r.onload = () => {

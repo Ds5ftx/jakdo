@@ -367,7 +367,7 @@ function hitTest(sx, sy, filter = () => true) {
   if (best) return { id: best.id, part: 'obj' };
   for (const o of objs) { if (o.t !== 'coord' || o.hidden || o.d.axes === false || !filter(o) || !G[o.id]) continue; const O = toS(G[o.id].o); if (Math.min(Math.abs(sy - O.y), Math.abs(sx - O.x)) < tol - 2) return { id: o.id, part: 'obj' }; }
   for (let i = objs.length - 1; i >= 0; i--) { const o = objs[i]; if (isInterior(o) && vis(o) && insideInterior(o, G[o.id], P)) return { id: o.id, part: 'obj' }; }
-  for (let i = objs.length - 1; i >= 0; i--) { const o = objs[i]; if (o.t === 'picture' && vis(o) && G[o.id] && insidePicture(G[o.id], P)) return { id: o.id, part: 'obj' }; }
+  for (const cx of [false, true]) for (let i = objs.length - 1; i >= 0; i--) { const o = objs[i]; if (o.t === 'picture' && (o.k === 'cxf') === cx && vis(o) && G[o.id] && insidePicture(G[o.id], P)) return { id: o.id, part: 'obj' }; } // 원래 그림을 먼저 (변환된 상은 그다음)
   return null;
 }
 function nearPaths(sx, sy, tol) {
