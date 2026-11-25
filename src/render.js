@@ -66,7 +66,7 @@ function lineRange(g, type) {
 function setStroke(o, extraW = 0, color) {
   ctx.strokeStyle = color || colOf(o);
   ctx.lineWidth = [1, 1.25, 2.2, 3.6][o.w || 2] + extraW;
-  ctx.setLineDash(extraW ? [] : o.dash === 1 ? [7, 5] : o.dash === 2 ? [1.5, 4] : []);
+  ctx.setLineDash(extraW ? [] : o.dash === 1 ? [7, 5] : o.dash === 2 ? [1, 2.5] : []);
   ctx.lineCap = 'round';
 }
 function pathStraight(g, type) { const [t0, t1] = lineRange(g, type); const A = toS(lerp(g.a, g.b, t0)), B = toS(lerp(g.a, g.b, t1)); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); }

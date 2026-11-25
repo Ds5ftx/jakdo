@@ -138,7 +138,7 @@ function buildGSP() {
       const emit = (code, c, k, par, o, extra = [], opt = {}) => {
         if (par && par.some(v => !(v > 0))) throw 0; // 빠진 부모가 있으면 이 객체도 뺀다 (0 번 부모는 GSP 가 손상으로 봄)
         const [r, g, b] = GSPX.rgb(o ? o.color : 'ink');
-        let e = opt.e ?? 0x121; if (o && opt.e == null && o.t !== 'point' && o.t !== 'value') { e = 0x120 + Math.max(1, Math.min(3, Math.round(o.w || 1))); if (o.dash) e = 0x220 + (e & 0xf); }
+        let e = opt.e ?? 0x121; if (o && opt.e == null && o.t !== 'point' && o.t !== 'value') { e = 0x120 + Math.max(1, Math.min(3, Math.round(o.w || 1))); if (o.dash) e = (o.dash === 2 ? 0x100 : 0x110) + (e & 0xf); } // 0x1SW: S 2=실선 1=파선 0=점선
         const hid = (o && o.hidden) || opt.hidden ? 1 : 0;
         const h = new GSPX.B().u32(code | ((hid | (opt.fl || 0)) << 16)).u16(0).u16(c).u16(k).u16(e).u8(r).u8(g).u8(b).u8(0);
         if (opt.interior) h.hex('ff7f0000').zeros(8); else if (opt.pic) h.hex('ffff0000').zeros(8); else h.hex('ffff0000c1bdf0ff00000000');

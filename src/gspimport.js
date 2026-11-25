@@ -102,7 +102,7 @@ GSPI.build = (F, sec, links) => {
     o.hidden = !!(src.fl & 1);
     o.color = GSPI.color(...src.rgb);
     const e = src.e; let w = 1, dash = 0;
-    if (e < 256) { w = e === 0 ? 1 : e; dash = e === 0 ? 1 : 0; } else { w = (e & 0xf) || 1; const st = (e >> 8) & 0xf; dash = st === 2 ? 1 : st === 3 ? 2 : 0; }
+    if (e < 256) { w = e === 0 ? 1 : e; dash = e === 0 ? 1 : 0; } else { w = (e & 0xf) || 1; const st = (e >> 4) & 0xf; dash = st === 1 ? 1 : st === 0 ? 2 : 0; } // 0x1SW: S 2=실선 1=파선 0=점선, W 굵기
     if (o.t !== 'point') { o.w = Math.min(3, w); o.dash = dash; }
     if (isInterior(o)) o.alpha = 0.45;
   };
