@@ -102,7 +102,7 @@ GSPI.build = (F, sec, links) => {
     const r = src.rec[2005]; if (!r || r.len < 24) return;
     const n = dv.getUint16(r.p + 22, true); if (!n) return;
     const s = GSPI.sub(GSPI.dec(u8.slice(r.p + 24, r.p + 24 + n)).replace(/\0.*$/, ''));
-    if (s) { o.label = s; o.showLabel = dv.getUint16(r.p + 2, true) === 1; }
+    if (s) { o.label = s; o.showLabel = dv.getUint16(r.p + 2, true) === 1; const ty = dv.getUint16(r.p, true); o.ltype = ty; o._glo = ty === 7 ? { x: dv.getInt16(r.p + 6, true), y: dv.getInt16(r.p + 8, true) } : { x: 6, y: 6 }; } // 7: 레이블 왼쪽 위 = 점 + (dx, dy) / 6: GSP 가 자동으로 오른쪽 아래
   };
   const style = (src, o) => {
     o.hidden = !!(src.fl & 1);
@@ -116,14 +116,17 @@ GSPI.build = (F, sec, links) => {
   const toks = (src) => { const r = src.rec[2311]; if (!r || r.len < 46) return null; const n = dv.getUint16(r.p + 44, true); const t = []; for (let i = 0; i < n; i++) t.push(dv.getUint16(r.p + r.len - 2 * n + 2 * i, true)); return { t, r, n, form: r.len > 48 && dv.getUint16(r.p + 46, true) === 1 ? 'xy' : 'yx' }; }; // 46: 1 이면 x = f(y)
   const gsty = (src) => { // 2008: 이 페이지 글자 모양 표의 번호
     const r = src.rec[2008]; if (!r || r.len < 2 || !sec.styles) return null; const st = sec.styles[dv.getUint16(r.p, true)]; if (!st) return null;
-    const name = (sec.fonts || [])[st.f] || ''; return { name, fam: GSPI.fam(name), px: st.pt, it: st.it, g: { f: name, pt: st.pt, raw: st.raw } };
+    const name = (sec.fonts || [])[st.f] || ''; const on = k => st.raw[2 * k] === 0 && st.raw[2 * k + 1] !== 0; // 5·6·7 번 칸: 글자색의 R·G·B
+    const color = '#' + [5, 6, 7].map(k => on(k) ? 'ff' : '00').join(''); return { name, fam: GSPI.fam(name), px: st.pt, color, g: { f: name, pt: st.pt, raw: st.raw } };
   };
   const applySty = (src, o) => {
-    const st = gsty(src); if (!st || !o) return;
-    if (o.t === 'text') { o.d.size = st.px; o.d.font = st.fam; if (st.it) o.d.italic = true; o.d.gsty = st.g; }
-    else if (o.t === 'value') { o.d.size = st.px; o.d.font = st.fam; o.d.gsty = st.g; }
+    if (!o) return; const st = gsty(src);
+    if (o._glo) { const g0 = o._glo; delete o._glo; const sz = (st && st.px) || 16, w = 0.6 * sz * String(o.label || '').length, h = sz; o.lo = { x: clamp(g0.x, -w - 8, 8), y: clamp(g0.y, -h - 8, 8) }; } // GSP 는 레이블을 점 가까이(약 8px 안)에 둔다
+    if (!st) return;
+    if (o.t === 'text') { o.d.size = st.px; o.d.font = st.fam; o.color = st.color; o.d.gsty = st.g; }
+    else if (o.t === 'value') { o.d.size = st.px; o.d.font = st.fam; o.color = st.color; o.d.gsty = st.g; }
     else if (o.t === 'button') o.d.gsty = st.g;
-    else if (o.t !== 'coord' && src.rec[2005]) { o.lf = { size: st.px, font: st.fam, italic: st.it, bold: false }; o.gsty = st.g; }
+    else if (o.t !== 'coord' && src.rec[2005]) { o.lf = { size: st.px, font: st.fam, italic: true, bold: false, color: st.color }; o.gsty = st.g; }
   };
   const fin = (src, id, opts = {}) => { const o = obj(id); if (!o) return null; if (!opts.noStyle) style(src, o); label(src, o); return id; };
   const text = (src, s, sx, sy, extra = {}) => add({ t: 'text', k: 'cap', d: { text: s, sx, sy, size: 14, ...extra }, color: GSPI.color(...src.rgb) }).id;
@@ -297,7 +300,7 @@ GSPI.build = (F, sec, links) => {
     map[i] = id;
     const o = obj(id); if (o.k === 'xf') o.showLabel = false;
     if (!['value', 'text', 'button', 'coord'].includes(o.t) && s.code !== 54) fin(s, id);
-    else if (o.t === 'value') { label(s, o); o.hidden = !!(s.fl & 3); if (s.rgb.some(v => v)) o.color = GSPI.color(...s.rgb); } // 2: GSP 가 화면에 보이지 않게 둔 값
+    else if (o.t === 'value') { label(s, o); o.hidden = !!(s.fl & 3); if (s.rgb.some(v => v)) o.color = GSPI.color(...s.rgb); } // 글자 모양이 있으면 아래 applySty 의 색이 우선 // 2: GSP 가 화면에 보이지 않게 둔 값
     applySty(s, o);
   });
   return skipped;

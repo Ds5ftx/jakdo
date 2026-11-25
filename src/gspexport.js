@@ -5,19 +5,20 @@ const GSPX = {};
 GSPX.b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 /* 글자 모양 표: 객체의 글자 크기·글꼴·기울임 → 페이지의 1201(글꼴)·1203(모양) 표와 각 객체의 2008 번호 */
 GSPX.styleTables = (recs) => {
-  const fonts = [['Times New Roman', 1], ['굴림', 0]], styles = [{ f: 0, pt: 16, raw: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0] }, { f: 1, pt: 16, raw: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0] }];
+  const fonts = [['Times New Roman', 1], ['굴림', 0]], styles = [{ f: 0, pt: 16, raw: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0] }, { f: 1, pt: 16, raw: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0] }];
   const fontIdx = n => { let i = fonts.findIndex(f => f[0] === n); if (i < 0) { fonts.push([n, 1]); i = fonts.length - 1; } return i; };
+  const bits = (c) => GSPX.rgb(c).map(v => v >= 128); // 글자색 → 5·6·7 번 칸(R·G·B)
   const want = (o) => {
-    if (!o) return null; let size, fam, it, g;
-    if (o.t === 'text') { size = o.d.size || 15; fam = o.d.font || 'sans'; it = !!o.d.italic; g = o.d.gsty; }
-    else if (o.t === 'value') { if (!o.d.size && !o.d.gsty) return null; size = o.d.size || 14; fam = o.d.font || 'sans'; g = o.d.gsty; it = g ? g.raw[11] === 1 : false; }
-    else if (o.t === 'button') { g = o.d.gsty; size = g ? g.pt : 14; fam = g ? GSPI.fam(g.f) : 'sans'; it = g ? g.raw[11] === 1 : false; }
-    else if (o.lf && o.lf.size) { size = o.lf.size; fam = o.lf.font || 'serif'; it = o.lf.italic ?? true; g = o.gsty; }
+    if (!o) return null; let size, fam, g, c;
+    if (o.t === 'text') { size = o.d.size || 15; fam = o.d.font || 'sans'; g = o.d.gsty; c = o.color; }
+    else if (o.t === 'value') { if (!o.d.size && !o.d.gsty) return null; size = o.d.size || 14; fam = o.d.font || 'sans'; g = o.d.gsty; c = o.color; }
+    else if (o.t === 'button') { g = o.d.gsty; size = g ? g.pt : 14; fam = g ? GSPI.fam(g.f) : 'sans'; c = 'ink'; }
+    else if (o.lf && o.lf.size) { size = o.lf.size; fam = o.lf.font || 'serif'; g = o.gsty; c = o.lf.color || 'ink'; }
     else return null;
-    const pt = Math.max(6, Math.round(size));
-    if (g && g.pt === pt && GSPI.fam(g.f) === fam) { const raw = g.raw.slice(); raw[10] = it ? 0 : 1; raw[11] = it ? 1 : 0; return { f: fontIdx(g.f), pt, raw }; }
-    const raw = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]; if (it) { raw[10] = 0; raw[11] = 1; }
-    return { f: fontIdx(fam === 'serif' ? 'Times New Roman' : fam === 'mono' ? 'Courier New' : '굴림'), pt, raw };
+    const pt = Math.max(6, Math.round(size)); const raw = g && g.pt === pt && GSPI.fam(g.f) === fam ? g.raw.slice() : [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0];
+    bits(c).forEach((on, i) => { const k = 5 + i; raw[2 * k] = on ? 0 : 1; raw[2 * k + 1] = on ? 1 : 0; });
+    const fname = g && GSPI.fam(g.f) === fam ? g.f : fam === 'serif' ? 'Times New Roman' : fam === 'mono' ? 'Courier New' : '굴림';
+    return { f: fontIdx(fname), pt, raw };
   };
   for (const r of recs) {
     const at = r.rs.findIndex(x => x[0] === 2008); if (at < 0) continue; const w = want(r.o); if (!w) continue;
@@ -101,8 +102,8 @@ GSPX.valLabel = name => { const u = GSPX.utf8(GSPX.glabel(String(name).trim()));
 GSPX.glabel = s => String(s).replace(/[₀-₉]+/g, m => '[' + [...m].map(c => c.charCodeAt(0) - 0x2080).join('') + ']').replace(/′/g, "'").replace(/″/g, "''");
 GSPX.rect = o => { const x = o.d.sx || 10, y = o.d.sy || 10; return new GSPX.B().i16(x).i16(y).i16(x + 120).i16(y + 24).get(); };
 GSPX.label = (o, type = 7) => {
-  if (!o.label || !String(o.label).trim()) return null; const t = GSPX.utf8(GSPX.glabel(String(o.label).trim()));
-  const b = new GSPX.B().u16(type).u16(o.showLabel ? 1 : 0).u16(0).i16(o.lx ?? 6).i16(o.ly ?? -14).zeros(4); if (type === 6) b.hex('986e12c1515c6141'); else b.zeros(8); b.u16(t.length).bytes(t);
+  if (!o.label || !String(o.label).trim()) return null; if (o.ltype) type = o.ltype; const t = GSPX.utf8(GSPX.glabel(String(o.label).trim()));
+  if (o.lo) type = 7; const b = new GSPX.B().u16(type).u16(o.showLabel ? 1 : 0).u16(0).i16(Math.round(o.lo ? o.lo.x : o.lx ?? 6)).i16(Math.round(o.lo ? o.lo.y : o.ly ?? -14)).zeros(4); if (type === 6) b.hex('986e12c1515c6141'); else b.zeros(8); b.u16(t.length).bytes(t);
   b.u8(0); if (b.a.length % 2) b.u8(0); return b.get();
 };
 GSPX.markup = (text, maxw = 640) => {

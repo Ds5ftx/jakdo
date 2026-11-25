@@ -242,7 +242,7 @@ function draw() {
     const x = a.x + off.x, y = a.y + off.y + lsz * 0.88;
     o._lb = { x, y: y - lsz * 0.88, w, h: lsz * 1.12 };
     ctx.fillStyle = THEME.paper; ctx.globalAlpha = 0.7; ctx.fillRect(x - 1, y - lsz * 0.82, w + 2, lsz * 1.06); ctx.globalAlpha = 1;
-    ctx.fillStyle = selSet.has(o.id) && hitPartSel === 'label' ? THEME.sel : col(o.t === 'point' || isInterior(o) ? 'ink' : o.color);
+    ctx.fillStyle = selSet.has(o.id) && hitPartSel === 'label' ? THEME.sel : col(o.lf && o.lf.color ? o.lf.color : o.t === 'point' || isInterior(o) ? 'ink' : o.color);
     ctx.fillText(txt, x, y);
   }
   // 화면 객체
