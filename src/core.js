@@ -528,7 +528,7 @@ function computeValue(o, Gx) {
       break;
     }
     case 'func': case 'deriv': case 'data': return computeFunc(o, Gx);
-    case 'ptval': { const s = g(0); if (s) r = N(obj(o.p[0]).d.t); break; }
+    case 'ptval': { const s = g(0); if (s) { const P = obj(o.p[0]), path = P && P.k === 'on' ? obj(P.p[0]) : null, gp = path && Gx[path.id]; let t = P.d.t; if (gp) { try { const q = pathProj(path, gp, s); if (isFinite(q)) t = q; } catch (e) { } } r = N(t); } break; } // 자취·드래그 중에도 실제 위치에서 읽음
     case 'fdef': { if (g(0)) { r = N(NaN); r.fdef = true; } break; }
     case 'param': r = { raw: o.d.v, v: o.d.v, u: o.d.unit || 'none' }; if (r.u === 'dist') r.raw = o.d.v; if (r.u === 'angle') r.raw = o.d.v * (doc.prefs.deg ? D2R : 1); return r;
     case 'calc': {

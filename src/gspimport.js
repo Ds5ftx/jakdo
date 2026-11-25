@@ -172,7 +172,7 @@ GSPI.build = (F, sec, links) => {
           if (path.t === 'circle' || path.t === 'cinterior') { const c = D(r, 4), sn = D(r, 12); t = mod(Math.atan2(sn, c) / TAU, 1); }
           else if (path.isAxis) { const q = obj(path.p[1]); const u = (q && q.d.u) || (q && obj(q.p[0]) && obj(q.p[0]).d.u) || 1; t = (t - 0.5) * GSPI.AXIS_PX / (u * PXCM) * (path.isAxis === 'y' ? -1 : 1); } // y축은 화면 아래쪽이 + 방향 // 축 위의 점: 원점에서 화면 200px 범위를 0~1로 잰 값
           else if (path.t === 'fplot') { const lo = path.d.xmin ?? -10, hi = path.d.xmax ?? 10; t = lo + t * (hi - lo); }
-          id = mkOn(P[0], isFinite(t) ? t : 0.5); break;
+          id = mkOn(P[0], isFinite(t) ? t : 0.5); if (path.t === 'polygon' && isFinite(t)) obj(id).d.pe = t; else if ((path.k === 'perp' || path.k === 'par') && !path.isAxis && isFinite(t)) obj(id).d.pl = t; break; // 다각형: GSP 는 「변 번호 + 변 위의 비율」로 저장 → 불러온 뒤 둘레 비율로 바꿈
         }
         case 80: id = mkArcCPP(P[0], P[1], P[2]); break; // 첫 점에서 둘째 점까지 반시계 방향 (GSP 와 같음) // 중심과 두 점으로 정한 호
         case 81: id = mkArc3(P[0], P[1], P[2]); break; // 세 점을 지나는 호
@@ -180,6 +180,16 @@ GSPI.build = (F, sec, links) => {
         case 97: { // 매개변수로 움직이는 자취: [자취를 그릴 객체, 매개변수, 연쇄…]
           const prm = po(1); if (!prm || prm.t !== 'value') break; const r = s.rec[2306]; id = mkLocus(P[1], P[0]);
           if (r && r.len >= 20) { let a = D(r, 0), b = D(r, 8); if (isFinite(a) && isFinite(b) && b > a) { if (prm.k === 'param' && (a < (prm.d.min ?? 0) || b > (prm.d.max ?? 10))) { prm.d.min = Math.min(prm.d.min ?? 0, a); prm.d.max = Math.max(prm.d.max ?? 10, b); } const lo = prm.d.min ?? 0, sp = (prm.d.max ?? 10) - lo; if (sp > 0) obj(id).d.dom = [(a - lo) / sp, (b - lo) / sp]; } obj(id).d.n = dv.getUint32(r.p + 16, true) || undefined; }
+          break;
+        }
+        case 93: id = mkInt(P[0], P[1], 0); break; // 직선류와 다각형 둘레의 교점 (반직선이면 첫 교점)
+        case 95: id = add({ t: 'point', k: 'onv', p: [P[1], P[0]], d: {} }).id; break; // 값으로 정한 경로 위의 점: [값, 경로]
+        case 101: case 102: case 96: { // 사용자 변환의 상: [상, 원상 객체, 변환의 원상 점, 연쇄…, 상]
+          const src = P[2], dst = P[0], pre = P[1]; const r = s.rec[2306]; const ns = r && r.len >= 20 ? dv.getUint32(r.p + 16, true) : 0;
+          doc.cxf = doc.cxf || []; if (!doc.cxf.some(t => t.pre === src && t.img === dst)) doc.cxf.push({ id: Date.now() + doc.cxf.length, name: '사용자 변환 ' + (doc.cxf.length + 1), pre: src, img: dst });
+          if (s.code === 101) id = add({ t: 'point', k: 'cxf', p: [pre, src, dst] }).id;
+          else if (s.code === 102) id = add({ t: 'locus', k: 'cxf', p: [pre, src, dst], d: ns ? { n: Math.min(ns, 2000) } : {} }).id;
+          else id = add({ t: 'picture', k: 'cxf', p: [pre, src, dst], d: { n: ns ? Math.max(12, Math.min(64, Math.round(Math.sqrt(ns) / 4))) : 24 } }).id;
           break;
         }
         case 91: { // 표: 칸 글자를 읽어 고정 행으로 (마지막 행은 실시간 값)
@@ -255,7 +265,7 @@ GSPI.build = (F, sec, links) => {
           const sx = dv.getInt16(r.p + 20, true), sy = dv.getInt16(r.p + 22, true);
           const tmp = {}; label(s, tmp); const txt = tmp.label || '버튼';
           if (ty === 5) { id = add({ t: 'button', k: 'b', p: [], d: { act: 'link', sx, sy, text: txt } }).id; links.push({ id, page: sub }); }
-          else if (ty === 1 && sub !== 3) id = add({ t: 'button', k: 'b', p: P.slice(), d: { act: 'hide', sx, sy, text: txt } }).id;
+          else if ((ty === 0 || ty === 1) && sub !== 3) id = add({ t: 'button', k: 'b', p: P.filter(v => v != null), d: { act: 'hide', sx, sy, text: txt } }).id; // 숨기기/보이기: ty 0 = 지금 보임(누르면 숨김), 1 = 지금 숨김
           else if (ty === 2) id = add({ t: 'button', k: 'b', p: P.filter(v => v != null), d: { act: 'anim', sx, sy, text: txt } }).id;
           else if (ty === 3 && P.length === 2 && P.every(v => v != null)) id = add({ t: 'button', k: 'b', p: P.slice(), d: { act: 'move', sx, sy, text: txt, speed: [2, 6, 15, 0][sub] ?? 6 } }).id;
           else if (ty === 4 && P[0] != null) id = add({ t: 'button', k: 'b', p: [P[0]], d: { act: 'scroll', sx, sy, text: txt, mode: sub === 1 ? 'center' : 'tl' } }).id;
@@ -277,7 +287,22 @@ GSPI.build = (F, sec, links) => {
 /* 교점 번호 보정: GSP에서 보이던 교점이 여기서 정의되지 않으면(호·선분 밖을 고른 경우) 다른 교점으로 바꿔 본다 */
 GSPI.AXIS_PX = 200;
 GSPI.UNIT = { 0x100: 'rad', 0x101: '°', 0x200: 'px', 0x201: 'cm', 0x202: 'in' }; // GSP 계산기 단위 토큰
+// GSP 의 수선·평행선 위 점: 통과점 + (t − 0.5)·V. V 는 기준 직선의 벡터(평행선) 또는 그것을 화면에서 시계 방향으로 90° 돌린 벡터(수선)
+GSPI.lineVec = (o, depth = 0) => {
+  const g = G[o.id]; if (!g || depth > 20) return null;
+  if (o.t === 'line' && (o.k === 'perp' || o.k === 'par')) { const r = obj(o.p[1]); const v = r && GSPI.lineVec(r, depth + 1); if (!v) return null; return o.k === 'par' ? v : { x: v.y, y: -v.x }; }
+  return g.a && g.b ? { x: g.b.x - g.a.x, y: g.b.y - g.a.y } : null;
+};
 GSPI.fixInts = () => {
+  recompute();
+  for (const o of doc.objs) { // 수선·평행선 위의 점: GSP 매개변수 → 앱 매개변수
+    if (o.t !== 'point' || o.k !== 'on' || o.d.pl == null) continue; const L = obj(o.p[0]), g = G[L.id], T = G[L.p[0]], V = GSPI.lineVec(L); const tg = o.d.pl; delete o.d.pl; if (!g || !T || !V) continue;
+    const pos = { x: T.x + (tg - 0.5) * V.x, y: T.y + (tg - 0.5) * V.y }, d = { x: g.b.x - g.a.x, y: g.b.y - g.a.y }, dd = d.x * d.x + d.y * d.y; if (dd > 1e-18) { o.d.t = ((pos.x - g.a.x) * d.x + (pos.y - g.a.y) * d.y) / dd; recompute(); }
+  }
+  for (const o of doc.objs) { // 다각형 위의 점: 변 매개변수 → 둘레 비율
+    if (o.t !== 'point' || o.k !== 'on' || o.d.pe == null) continue; const g = G[o.p[0]]; const pe = o.d.pe; delete o.d.pe; if (!g || !g.pts) continue;
+    const n = g.pts.length, e = Math.floor(mod(pe, n)), f = mod(pe, n) - e, L = polyLens(g.pts, true), tot = L[L.length - 1]; if (tot > 1e-12) { o.d.t = (L[e] + f * (L[e + 1] - L[e])) / tot; recompute(); }
+  }
   recompute();
   for (const o of doc.objs) {
     if (o.t !== 'point' || o.k !== 'int' || G[o.id] || o.p.some(id => !G[id])) continue;

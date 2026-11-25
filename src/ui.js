@@ -647,7 +647,14 @@ function updateMotion() { const m = $('#motion'); const show = !!(anims.size || 
 let motionPinned = false;
 function runButton(o) {
   if (runButtonExt(o)) return;
-  if (o.d.act === 'hide') { const show = o.p.every(id => obj(id) && obj(id).hidden); snap(); o.p.forEach(id => { const t = obj(id); if (t) t.hidden = !show; }); o.d.text = o.d.text.replace(/(숨기기|보이기)$/, show ? '숨기기' : '보이기'); refresh(); }
+  if (o.d.act === 'hide') {
+    const ts = o.p.map(obj).filter(Boolean); if (!ts.length) return;
+    const t0 = String(o.d.text || ''), lead = /^\s*(보이기|숨기기|Show|Hide)(?=[\s:]|$)/i.exec(t0); // GSP: 「보이기: 이름」「Show 이름」처럼 앞에 붙는다
+    const show = o.d.mode === 'show' ? true : o.d.mode === 'hideonly' ? false : lead ? /^(보이기|show)$/i.test(lead[1]) : ts.some(t => t.hidden);
+    snap(); ts.forEach(t => { t.hidden = !show; });
+    if (!o.d.mode) o.d.text = lead ? t0.replace(lead[1], /[가-힣]/.test(lead[1]) ? (show ? '숨기기' : '보이기') : ((w => lead[1][0] === lead[1][0].toLowerCase() ? w.toLowerCase() : w)(show ? 'Hide' : 'Show'))) : t0.replace(/(숨기기|보이기)$/, show ? '숨기기' : '보이기');
+    refresh();
+  }
   else if (o.d.act === 'anim') { if (o.p.some(id => anims.has(id))) { stopAnim(o.p); o._running = false; } else { startAnim(o.p); o.p.forEach(id => { const a = anims.get(id); if (a) { a.speed = o.d.speed || 1; a.dir = o.d.dir || 1; a.once = !!o.d.once; } }); o._running = true; } requestDraw(); }
   else if (o.d.act === 'link') followLink(o);
   else if (o.d.act === 'move') { snap(); const [a, b] = o.p; if (obj(a) && obj(a).k === 'free') { moves.set(a, { to: b, speed: o.d.speed ?? 6 }); kick(); } }

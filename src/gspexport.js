@@ -3,6 +3,10 @@ const GSPX_T = { t902: "hAEAAIYDAAACAAQABAADAAMABAAAAAAAAAAAALsA7J20IOusuOyEnOyd
    GSP 5.03 이 저장한 파일을 본으로 삼아 문서·페이지 머리글을 그대로 쓰고, 객체 레코드만 새로 만든다. */
 const GSPX = {};
 GSPX.b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+GSPX.cxfPar = (o, P1) => { // 사용자 변환의 상: [상, 원상 객체, 변환의 원상 점, 연쇄…(상으로 끝남)]
+  const [x, pre, img] = o.p; const chain = cxfChain(pre, img).map(c => P1(c.id)); if (chain.some(v => !v) || !P1(x) || !P1(pre)) throw 0;
+  return [P1(img), P1(x), P1(pre), ...chain];
+};
 GSPX.W = class {
   constructor() { this.parts = []; this.n = 0; }
   raw(u8) { this.parts.push(u8); this.n += u8.length; }
@@ -193,15 +197,22 @@ function buildGSP() {
               if (sA && sB) code = 9;
               else if ((sA && cB) || (cA && sB)) { const L = sA ? A : B; if (L.k === 'perp' && GSPI.opt.perp) i = 1 - i; code = i ? 12 : 11; }
               else if (cA && cB) { if (GSPI.opt.cc) i = 1 - i; code = i ? 14 : 13; }
-              if (code == null) throw 0;
-              id = emit(code, 1, 45, par, o, lab(o, []), { e: 0x221 });
+              if (code == null && (A.t === 'polygon' || B.t === 'polygon') && (sA || sB) && !(o.d.i > 0)) id = emit(93, 1, 45, sA ? [P1(A.id), P1(B.id)] : [P1(B.id), P1(A.id)], o, lab(o, []), { e: 0x221 }); // 직선류와 다각형 둘레의 교점
+              else { if (code == null) throw 0; id = emit(code, 1, 45, par, o, lab(o, []), { e: 0x221 }); }
+            } else if (pk === 'onv' && A && B) { id = emit(95, 1, 56, [P1(B.id), P1(A.id)], o, lab(o, []), { e: 0x221 }); // 값으로 정한 경로 위의 점
+            } else if (pk === 'cxf') { id = emit(101, 1, 89, GSPX.cxfPar(o, P1), o, lab(o, []), { e: 0x221 }); // 사용자 변환의 상
             } else if (pk === 'on' && A) {
               const k = kOf(A) || (A.t === 'locus' ? 42 : A.t === 'fplot' ? 58 : 0); if (!k) throw 0;
               const b = new GSPX.B().u16(15).u16(k);
               if (A.t === 'circle') { const a = (o.d.t || 0) * TAU; b.f64(Math.cos(a)).f64(Math.sin(a)); }
               else if (A.t === 'fplot') { const lo = A.d.xmin ?? -10, hi = A.d.xmax ?? 10; b.f64(((o.d.t ?? 0) - lo) / ((hi - lo) || 1)); }
               else if (A.isAxis) { const ga = G[A.id]; const L = ga ? Math.hypot(ga.b.x - ga.a.x, ga.b.y - ga.a.y) : 1; b.f64(0.5 + (o.d.t ?? 0) * L * PXCM / GSPI.AXIS_PX * (A.isAxis === 'y' ? -1 : 1)); }
-              else b.f64(o.d.t ?? 0.5);
+              else if ((A.k === 'perp' || A.k === 'par') && !A.isAxis && G[A.id] && G[A.p[0]] && GSPI.lineVec(A) && G[o.id]) { // 앱 매개변수 → GSP 매개변수 (통과점에서 0.5)
+                const V = GSPI.lineVec(A), T = G[A.p[0]], q = G[o.id], vv = V.x * V.x + V.y * V.y; b.f64(vv > 1e-18 ? 0.5 + ((q.x - T.x) * V.x + (q.y - T.y) * V.y) / vv : 0.5);
+              } else if (A.t === 'polygon' && G[A.id] && G[A.id].pts) { // 둘레 비율 → 「변 번호 + 변 위의 비율」(GSP 방식)
+                const pts = G[A.id].pts, L = polyLens(pts, true), tot = L[L.length - 1], sv = mod(o.d.t ?? 0, 1) * tot; let e = 0; while (e < pts.length - 1 && sv > L[e + 1]) e++;
+                const seg = L[e + 1] - L[e]; b.f64(e + (seg > 1e-12 ? Math.min(1, (sv - L[e]) / seg) : 0)).hex('00000000ffff0000'); // 다각형 위의 점은 20바이트 (GSP 와 같게)
+              } else b.f64(o.d.t ?? 0.5);
               id = emit(15, 1, 10, par, o, lab(o, [[2003, b.get()]]), { e: 0x221 });
             } else if (pk === 'plot' && o.d.xV == null && o.d.yV == null && !o.d.polar) id = emit(67, 1, 56, [P1(o.p[0])], o, lab(o, [[2003, new GSPX.B().u32(67).f64(o.d.x || 0).f64(o.d.y || 0).get()]]), { e: 0x221 });
             else if (pk === 'plot' && !o.d.polar && (o.d.xV != null) !== (o.d.yV != null)) { // 한쪽만 값: 다른 쪽은 숨은 매개변수로
@@ -242,6 +253,12 @@ function buildGSP() {
           else if (id == null && o.t === 'arc' && o.k === 'cpp') id = emit(80, 12, 67, par, o, lab(o, []));
           else if (id == null && o.t === 'polygon' && o.k === 'pts') id = emit(8, 4, GSPX.polyK(o.p.length), par, o, lab(o, []), { interior: true });
           else if (id == null && o.t === 'cinterior') id = emit(10, 5, 16, par, o, lab(o, []), { interior: true });
+          else if (id == null && o.t === 'locus' && o.k === 'cxf') { // 사용자 변환으로 옮긴 경로
+            id = emit(102, 6, 90, GSPX.cxfPar(o, P1), o, [[2306, new GSPX.B().f64(0).f64(1).u32(o.d.n || 500).u16(4).u32(0).zeros(6).u16(0).zeros(6).get()]], { e: 0x121 });
+          } else if (id == null && o.t === 'picture' && o.k === 'cxf') { // 사용자 변환으로 옮긴 그림
+            const ns = Math.max(2500, Math.round(Math.pow((o.d.n || 24) * 4, 2)));
+            id = emit(96, 6, 91, GSPX.cxfPar(o, P1), o, [[2003, new GSPX.B().u32(96).f64(0.6).get()], [2306, new GSPX.B().f64(0).f64(1).u32(ns).u16(4).u16(1).u16(0).zeros(6).u16(1).zeros(6).get()]], { e: 0x121 });
+          }
           else if (id == null && o.t === 'locus') {
             const [drv, trc] = o.p; const D = obj(drv);
             if (D && D.t === 'value' && o.p.length === 2) { // 매개변수로 움직이는 자취 (GSP 97)
@@ -324,7 +341,8 @@ function buildGSP() {
             id = emit(92, 17, 84, p, o, [[2317, new GSPX.B().hex('0d090000').u32(0x1c).u32(0x10).i16(o.d.sx || 10).i16(o.d.sy || 10).zeros(12).get()], [2008, Uint8Array.of(1, 0)]]);
           } else if (id == null && o.t === 'button' && (o.d.act === 'hide' || o.d.act === 'link')) {
             const sx = o.d.sx || 10, sy = o.d.sy || 10, link = o.d.act === 'link';
-            const ty = link ? [5, Math.max(0, book.pages.findIndex(p => p.id === o.d.pid))] : [1, 6];
+            const lead = /^\s*(보이기|숨기기|Show|Hide)(?=[\s:]|$)/i.exec(o.d.text || ''), shown = lead ? /^(숨기기|hide)$/i.test(lead[1]) : !o.p.every(i => obj(i) && obj(i).hidden);
+            const ty = link ? [5, Math.max(0, book.pages.findIndex(p => p.id === o.d.pid))] : [shown ? 0 : 1, 6]; // 숨기기/보이기 상태: 0 = 지금 보임
             const l = GSPX.label({ label: o.d.text || '버튼', showLabel: true }, 7);
             const r2310 = new GSPX.B().hex('06090000').u32(0x18).u32(0x0c).u16(ty[0]).u16(ty[1]).zeros(4).i16(sx).i16(sy).get();
             const w = 16 + 8 * String(o.d.text || '').length;

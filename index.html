@@ -734,7 +734,7 @@ function computeValue(o, Gx) {
       break;
     }
     case 'func': case 'deriv': case 'data': return computeFunc(o, Gx);
-    case 'ptval': { const s = g(0); if (s) r = N(obj(o.p[0]).d.t); break; }
+    case 'ptval': { const s = g(0); if (s) { const P = obj(o.p[0]), path = P && P.k === 'on' ? obj(P.p[0]) : null, gp = path && Gx[path.id]; let t = P.d.t; if (gp) { try { const q = pathProj(path, gp, s); if (isFinite(q)) t = q; } catch (e) { } } r = N(t); } break; } // 자취·드래그 중에도 실제 위치에서 읽음
     case 'fdef': { if (g(0)) { r = N(NaN); r.fdef = true; } break; }
     case 'param': r = { raw: o.d.v, v: o.d.v, u: o.d.unit || 'none' }; if (r.u === 'dist') r.raw = o.d.v; if (r.u === 'angle') r.raw = o.d.v * (doc.prefs.deg ? D2R : 1); return r;
     case 'calc': {
@@ -2192,7 +2192,14 @@ function updateMotion() { const m = $('#motion'); const show = !!(anims.size || 
 let motionPinned = false;
 function runButton(o) {
   if (runButtonExt(o)) return;
-  if (o.d.act === 'hide') { const show = o.p.every(id => obj(id) && obj(id).hidden); snap(); o.p.forEach(id => { const t = obj(id); if (t) t.hidden = !show; }); o.d.text = o.d.text.replace(/(숨기기|보이기)$/, show ? '숨기기' : '보이기'); refresh(); }
+  if (o.d.act === 'hide') {
+    const ts = o.p.map(obj).filter(Boolean); if (!ts.length) return;
+    const t0 = String(o.d.text || ''), lead = /^\s*(보이기|숨기기|Show|Hide)(?=[\s:]|$)/i.exec(t0); // GSP: 「보이기: 이름」「Show 이름」처럼 앞에 붙는다
+    const show = o.d.mode === 'show' ? true : o.d.mode === 'hideonly' ? false : lead ? /^(보이기|show)$/i.test(lead[1]) : ts.some(t => t.hidden);
+    snap(); ts.forEach(t => { t.hidden = !show; });
+    if (!o.d.mode) o.d.text = lead ? t0.replace(lead[1], /[가-힣]/.test(lead[1]) ? (show ? '숨기기' : '보이기') : ((w => lead[1][0] === lead[1][0].toLowerCase() ? w.toLowerCase() : w)(show ? 'Hide' : 'Show'))) : t0.replace(/(숨기기|보이기)$/, show ? '숨기기' : '보이기');
+    refresh();
+  }
   else if (o.d.act === 'anim') { if (o.p.some(id => anims.has(id))) { stopAnim(o.p); o._running = false; } else { startAnim(o.p); o.p.forEach(id => { const a = anims.get(id); if (a) { a.speed = o.d.speed || 1; a.dir = o.d.dir || 1; a.once = !!o.d.once; } }); o._running = true; } requestDraw(); }
   else if (o.d.act === 'link') followLink(o);
   else if (o.d.act === 'move') { snap(); const [a, b] = o.p; if (obj(a) && obj(a).k === 'free') { moves.set(a, { to: b, speed: o.d.speed ?? 6 }); kick(); } }
@@ -3820,7 +3827,7 @@ GSPI.build = (F, sec, links) => {
           if (path.t === 'circle' || path.t === 'cinterior') { const c = D(r, 4), sn = D(r, 12); t = mod(Math.atan2(sn, c) / TAU, 1); }
           else if (path.isAxis) { const q = obj(path.p[1]); const u = (q && q.d.u) || (q && obj(q.p[0]) && obj(q.p[0]).d.u) || 1; t = (t - 0.5) * GSPI.AXIS_PX / (u * PXCM) * (path.isAxis === 'y' ? -1 : 1); } // y축은 화면 아래쪽이 + 방향 // 축 위의 점: 원점에서 화면 200px 범위를 0~1로 잰 값
           else if (path.t === 'fplot') { const lo = path.d.xmin ?? -10, hi = path.d.xmax ?? 10; t = lo + t * (hi - lo); }
-          id = mkOn(P[0], isFinite(t) ? t : 0.5); break;
+          id = mkOn(P[0], isFinite(t) ? t : 0.5); if (path.t === 'polygon' && isFinite(t)) obj(id).d.pe = t; else if ((path.k === 'perp' || path.k === 'par') && !path.isAxis && isFinite(t)) obj(id).d.pl = t; break; // 다각형: GSP 는 「변 번호 + 변 위의 비율」로 저장 → 불러온 뒤 둘레 비율로 바꿈
         }
         case 80: id = mkArcCPP(P[0], P[1], P[2]); break; // 첫 점에서 둘째 점까지 반시계 방향 (GSP 와 같음) // 중심과 두 점으로 정한 호
         case 81: id = mkArc3(P[0], P[1], P[2]); break; // 세 점을 지나는 호
@@ -3828,6 +3835,16 @@ GSPI.build = (F, sec, links) => {
         case 97: { // 매개변수로 움직이는 자취: [자취를 그릴 객체, 매개변수, 연쇄…]
           const prm = po(1); if (!prm || prm.t !== 'value') break; const r = s.rec[2306]; id = mkLocus(P[1], P[0]);
           if (r && r.len >= 20) { let a = D(r, 0), b = D(r, 8); if (isFinite(a) && isFinite(b) && b > a) { if (prm.k === 'param' && (a < (prm.d.min ?? 0) || b > (prm.d.max ?? 10))) { prm.d.min = Math.min(prm.d.min ?? 0, a); prm.d.max = Math.max(prm.d.max ?? 10, b); } const lo = prm.d.min ?? 0, sp = (prm.d.max ?? 10) - lo; if (sp > 0) obj(id).d.dom = [(a - lo) / sp, (b - lo) / sp]; } obj(id).d.n = dv.getUint32(r.p + 16, true) || undefined; }
+          break;
+        }
+        case 93: id = mkInt(P[0], P[1], 0); break; // 직선류와 다각형 둘레의 교점 (반직선이면 첫 교점)
+        case 95: id = add({ t: 'point', k: 'onv', p: [P[1], P[0]], d: {} }).id; break; // 값으로 정한 경로 위의 점: [값, 경로]
+        case 101: case 102: case 96: { // 사용자 변환의 상: [상, 원상 객체, 변환의 원상 점, 연쇄…, 상]
+          const src = P[2], dst = P[0], pre = P[1]; const r = s.rec[2306]; const ns = r && r.len >= 20 ? dv.getUint32(r.p + 16, true) : 0;
+          doc.cxf = doc.cxf || []; if (!doc.cxf.some(t => t.pre === src && t.img === dst)) doc.cxf.push({ id: Date.now() + doc.cxf.length, name: '사용자 변환 ' + (doc.cxf.length + 1), pre: src, img: dst });
+          if (s.code === 101) id = add({ t: 'point', k: 'cxf', p: [pre, src, dst] }).id;
+          else if (s.code === 102) id = add({ t: 'locus', k: 'cxf', p: [pre, src, dst], d: ns ? { n: Math.min(ns, 2000) } : {} }).id;
+          else id = add({ t: 'picture', k: 'cxf', p: [pre, src, dst], d: { n: ns ? Math.max(12, Math.min(64, Math.round(Math.sqrt(ns) / 4))) : 24 } }).id;
           break;
         }
         case 91: { // 표: 칸 글자를 읽어 고정 행으로 (마지막 행은 실시간 값)
@@ -3903,7 +3920,7 @@ GSPI.build = (F, sec, links) => {
           const sx = dv.getInt16(r.p + 20, true), sy = dv.getInt16(r.p + 22, true);
           const tmp = {}; label(s, tmp); const txt = tmp.label || '버튼';
           if (ty === 5) { id = add({ t: 'button', k: 'b', p: [], d: { act: 'link', sx, sy, text: txt } }).id; links.push({ id, page: sub }); }
-          else if (ty === 1 && sub !== 3) id = add({ t: 'button', k: 'b', p: P.slice(), d: { act: 'hide', sx, sy, text: txt } }).id;
+          else if ((ty === 0 || ty === 1) && sub !== 3) id = add({ t: 'button', k: 'b', p: P.filter(v => v != null), d: { act: 'hide', sx, sy, text: txt } }).id; // 숨기기/보이기: ty 0 = 지금 보임(누르면 숨김), 1 = 지금 숨김
           else if (ty === 2) id = add({ t: 'button', k: 'b', p: P.filter(v => v != null), d: { act: 'anim', sx, sy, text: txt } }).id;
           else if (ty === 3 && P.length === 2 && P.every(v => v != null)) id = add({ t: 'button', k: 'b', p: P.slice(), d: { act: 'move', sx, sy, text: txt, speed: [2, 6, 15, 0][sub] ?? 6 } }).id;
           else if (ty === 4 && P[0] != null) id = add({ t: 'button', k: 'b', p: [P[0]], d: { act: 'scroll', sx, sy, text: txt, mode: sub === 1 ? 'center' : 'tl' } }).id;
@@ -3925,7 +3942,22 @@ GSPI.build = (F, sec, links) => {
 /* 교점 번호 보정: GSP에서 보이던 교점이 여기서 정의되지 않으면(호·선분 밖을 고른 경우) 다른 교점으로 바꿔 본다 */
 GSPI.AXIS_PX = 200;
 GSPI.UNIT = { 0x100: 'rad', 0x101: '°', 0x200: 'px', 0x201: 'cm', 0x202: 'in' }; // GSP 계산기 단위 토큰
+// GSP 의 수선·평행선 위 점: 통과점 + (t − 0.5)·V. V 는 기준 직선의 벡터(평행선) 또는 그것을 화면에서 시계 방향으로 90° 돌린 벡터(수선)
+GSPI.lineVec = (o, depth = 0) => {
+  const g = G[o.id]; if (!g || depth > 20) return null;
+  if (o.t === 'line' && (o.k === 'perp' || o.k === 'par')) { const r = obj(o.p[1]); const v = r && GSPI.lineVec(r, depth + 1); if (!v) return null; return o.k === 'par' ? v : { x: v.y, y: -v.x }; }
+  return g.a && g.b ? { x: g.b.x - g.a.x, y: g.b.y - g.a.y } : null;
+};
 GSPI.fixInts = () => {
+  recompute();
+  for (const o of doc.objs) { // 수선·평행선 위의 점: GSP 매개변수 → 앱 매개변수
+    if (o.t !== 'point' || o.k !== 'on' || o.d.pl == null) continue; const L = obj(o.p[0]), g = G[L.id], T = G[L.p[0]], V = GSPI.lineVec(L); const tg = o.d.pl; delete o.d.pl; if (!g || !T || !V) continue;
+    const pos = { x: T.x + (tg - 0.5) * V.x, y: T.y + (tg - 0.5) * V.y }, d = { x: g.b.x - g.a.x, y: g.b.y - g.a.y }, dd = d.x * d.x + d.y * d.y; if (dd > 1e-18) { o.d.t = ((pos.x - g.a.x) * d.x + (pos.y - g.a.y) * d.y) / dd; recompute(); }
+  }
+  for (const o of doc.objs) { // 다각형 위의 점: 변 매개변수 → 둘레 비율
+    if (o.t !== 'point' || o.k !== 'on' || o.d.pe == null) continue; const g = G[o.p[0]]; const pe = o.d.pe; delete o.d.pe; if (!g || !g.pts) continue;
+    const n = g.pts.length, e = Math.floor(mod(pe, n)), f = mod(pe, n) - e, L = polyLens(g.pts, true), tot = L[L.length - 1]; if (tot > 1e-12) { o.d.t = (L[e] + f * (L[e + 1] - L[e])) / tot; recompute(); }
+  }
   recompute();
   for (const o of doc.objs) {
     if (o.t !== 'point' || o.k !== 'int' || G[o.id] || o.p.some(id => !G[id])) continue;
@@ -4059,6 +4091,10 @@ const GSPX_T = { t902: "hAEAAIYDAAACAAQABAADAAMABAAAAAAAAAAAALsA7J20IOusuOyEnOyd
    GSP 5.03 이 저장한 파일을 본으로 삼아 문서·페이지 머리글을 그대로 쓰고, 객체 레코드만 새로 만든다. */
 const GSPX = {};
 GSPX.b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+GSPX.cxfPar = (o, P1) => { // 사용자 변환의 상: [상, 원상 객체, 변환의 원상 점, 연쇄…(상으로 끝남)]
+  const [x, pre, img] = o.p; const chain = cxfChain(pre, img).map(c => P1(c.id)); if (chain.some(v => !v) || !P1(x) || !P1(pre)) throw 0;
+  return [P1(img), P1(x), P1(pre), ...chain];
+};
 GSPX.W = class {
   constructor() { this.parts = []; this.n = 0; }
   raw(u8) { this.parts.push(u8); this.n += u8.length; }
@@ -4249,15 +4285,22 @@ function buildGSP() {
               if (sA && sB) code = 9;
               else if ((sA && cB) || (cA && sB)) { const L = sA ? A : B; if (L.k === 'perp' && GSPI.opt.perp) i = 1 - i; code = i ? 12 : 11; }
               else if (cA && cB) { if (GSPI.opt.cc) i = 1 - i; code = i ? 14 : 13; }
-              if (code == null) throw 0;
-              id = emit(code, 1, 45, par, o, lab(o, []), { e: 0x221 });
+              if (code == null && (A.t === 'polygon' || B.t === 'polygon') && (sA || sB) && !(o.d.i > 0)) id = emit(93, 1, 45, sA ? [P1(A.id), P1(B.id)] : [P1(B.id), P1(A.id)], o, lab(o, []), { e: 0x221 }); // 직선류와 다각형 둘레의 교점
+              else { if (code == null) throw 0; id = emit(code, 1, 45, par, o, lab(o, []), { e: 0x221 }); }
+            } else if (pk === 'onv' && A && B) { id = emit(95, 1, 56, [P1(B.id), P1(A.id)], o, lab(o, []), { e: 0x221 }); // 값으로 정한 경로 위의 점
+            } else if (pk === 'cxf') { id = emit(101, 1, 89, GSPX.cxfPar(o, P1), o, lab(o, []), { e: 0x221 }); // 사용자 변환의 상
             } else if (pk === 'on' && A) {
               const k = kOf(A) || (A.t === 'locus' ? 42 : A.t === 'fplot' ? 58 : 0); if (!k) throw 0;
               const b = new GSPX.B().u16(15).u16(k);
               if (A.t === 'circle') { const a = (o.d.t || 0) * TAU; b.f64(Math.cos(a)).f64(Math.sin(a)); }
               else if (A.t === 'fplot') { const lo = A.d.xmin ?? -10, hi = A.d.xmax ?? 10; b.f64(((o.d.t ?? 0) - lo) / ((hi - lo) || 1)); }
               else if (A.isAxis) { const ga = G[A.id]; const L = ga ? Math.hypot(ga.b.x - ga.a.x, ga.b.y - ga.a.y) : 1; b.f64(0.5 + (o.d.t ?? 0) * L * PXCM / GSPI.AXIS_PX * (A.isAxis === 'y' ? -1 : 1)); }
-              else b.f64(o.d.t ?? 0.5);
+              else if ((A.k === 'perp' || A.k === 'par') && !A.isAxis && G[A.id] && G[A.p[0]] && GSPI.lineVec(A) && G[o.id]) { // 앱 매개변수 → GSP 매개변수 (통과점에서 0.5)
+                const V = GSPI.lineVec(A), T = G[A.p[0]], q = G[o.id], vv = V.x * V.x + V.y * V.y; b.f64(vv > 1e-18 ? 0.5 + ((q.x - T.x) * V.x + (q.y - T.y) * V.y) / vv : 0.5);
+              } else if (A.t === 'polygon' && G[A.id] && G[A.id].pts) { // 둘레 비율 → 「변 번호 + 변 위의 비율」(GSP 방식)
+                const pts = G[A.id].pts, L = polyLens(pts, true), tot = L[L.length - 1], sv = mod(o.d.t ?? 0, 1) * tot; let e = 0; while (e < pts.length - 1 && sv > L[e + 1]) e++;
+                const seg = L[e + 1] - L[e]; b.f64(e + (seg > 1e-12 ? Math.min(1, (sv - L[e]) / seg) : 0)).hex('00000000ffff0000'); // 다각형 위의 점은 20바이트 (GSP 와 같게)
+              } else b.f64(o.d.t ?? 0.5);
               id = emit(15, 1, 10, par, o, lab(o, [[2003, b.get()]]), { e: 0x221 });
             } else if (pk === 'plot' && o.d.xV == null && o.d.yV == null && !o.d.polar) id = emit(67, 1, 56, [P1(o.p[0])], o, lab(o, [[2003, new GSPX.B().u32(67).f64(o.d.x || 0).f64(o.d.y || 0).get()]]), { e: 0x221 });
             else if (pk === 'plot' && !o.d.polar && (o.d.xV != null) !== (o.d.yV != null)) { // 한쪽만 값: 다른 쪽은 숨은 매개변수로
@@ -4298,6 +4341,12 @@ function buildGSP() {
           else if (id == null && o.t === 'arc' && o.k === 'cpp') id = emit(80, 12, 67, par, o, lab(o, []));
           else if (id == null && o.t === 'polygon' && o.k === 'pts') id = emit(8, 4, GSPX.polyK(o.p.length), par, o, lab(o, []), { interior: true });
           else if (id == null && o.t === 'cinterior') id = emit(10, 5, 16, par, o, lab(o, []), { interior: true });
+          else if (id == null && o.t === 'locus' && o.k === 'cxf') { // 사용자 변환으로 옮긴 경로
+            id = emit(102, 6, 90, GSPX.cxfPar(o, P1), o, [[2306, new GSPX.B().f64(0).f64(1).u32(o.d.n || 500).u16(4).u32(0).zeros(6).u16(0).zeros(6).get()]], { e: 0x121 });
+          } else if (id == null && o.t === 'picture' && o.k === 'cxf') { // 사용자 변환으로 옮긴 그림
+            const ns = Math.max(2500, Math.round(Math.pow((o.d.n || 24) * 4, 2)));
+            id = emit(96, 6, 91, GSPX.cxfPar(o, P1), o, [[2003, new GSPX.B().u32(96).f64(0.6).get()], [2306, new GSPX.B().f64(0).f64(1).u32(ns).u16(4).u16(1).u16(0).zeros(6).u16(1).zeros(6).get()]], { e: 0x121 });
+          }
           else if (id == null && o.t === 'locus') {
             const [drv, trc] = o.p; const D = obj(drv);
             if (D && D.t === 'value' && o.p.length === 2) { // 매개변수로 움직이는 자취 (GSP 97)
@@ -4380,7 +4429,8 @@ function buildGSP() {
             id = emit(92, 17, 84, p, o, [[2317, new GSPX.B().hex('0d090000').u32(0x1c).u32(0x10).i16(o.d.sx || 10).i16(o.d.sy || 10).zeros(12).get()], [2008, Uint8Array.of(1, 0)]]);
           } else if (id == null && o.t === 'button' && (o.d.act === 'hide' || o.d.act === 'link')) {
             const sx = o.d.sx || 10, sy = o.d.sy || 10, link = o.d.act === 'link';
-            const ty = link ? [5, Math.max(0, book.pages.findIndex(p => p.id === o.d.pid))] : [1, 6];
+            const lead = /^\s*(보이기|숨기기|Show|Hide)(?=[\s:]|$)/i.exec(o.d.text || ''), shown = lead ? /^(숨기기|hide)$/i.test(lead[1]) : !o.p.every(i => obj(i) && obj(i).hidden);
+            const ty = link ? [5, Math.max(0, book.pages.findIndex(p => p.id === o.d.pid))] : [shown ? 0 : 1, 6]; // 숨기기/보이기 상태: 0 = 지금 보임
             const l = GSPX.label({ label: o.d.text || '버튼', showLabel: true }, 7);
             const r2310 = new GSPX.B().hex('06090000').u32(0x18).u32(0x0c).u16(ty[0]).u16(ty[1]).zeros(4).i16(sx).i16(sy).get();
             const w = 16 + 8 * String(o.d.text || '').length;
