@@ -703,10 +703,20 @@ function makeButton(act) {
 /* ================= 파일 ================= */
 let downloadsNS = null;
 (async () => { try { if (window.claude && window.claude.use) downloadsNS = await window.claude.use('downloads'); } catch (e) { } })();
+const SAVE_TYPES = { json: ['작도 파일', 'application/json'], gsp: ['GSP 스케치', 'application/octet-stream'], png: ['PNG 그림', 'image/png'], svg: ['SVG 그림', 'image/svg+xml'], html: ['웹 페이지', 'text/html'], csv: ['CSV 표', 'text/csv'] };
 async function saveFile(filename, data, mime) {
-  if (downloadsNS) { try { await downloadsNS.save({ filename, data }); toast('저장했습니다: ' + filename); return; } catch (e) { if (e && e.code === 'declined') return; } }
-  try { const blob = data instanceof Blob ? data : new Blob([data], { type: mime }); const a = el('a', { href: URL.createObjectURL(blob), download: filename }); document.body.append(a); a.click(); a.remove(); }
-  catch (e) { toast('이 화면에서는 파일 저장을 할 수 없습니다. 보관함을 이용하세요.'); }
+  // 1) 브라우저의 「다른 이름으로 저장」 창 (Chrome·Edge): 저장할 폴더와 파일 이름을 고른다
+  if (window.showSaveFilePicker) {
+    const ext = (filename.split('.').pop() || '').toLowerCase(), ty = SAVE_TYPES[ext];
+    try {
+      const h = await window.showSaveFilePicker({ suggestedName: filename, id: 'webgsp-save', types: ty ? [{ description: ty[0], accept: { [ty[1]]: ['.' + ext] } }] : undefined });
+      const w = await h.createWritable(); await w.write(data instanceof Blob ? data : new Blob([data], { type: mime })); await w.close();
+      toast('저장했습니다: ' + h.name); return true;
+    } catch (e) { if (e && e.name === 'AbortError') return false; } // 취소하면 저장하지 않음, 창을 쓸 수 없으면(보안 제한 등) 아래 방법으로
+  }
+  if (downloadsNS) { try { await downloadsNS.save({ filename, data }); toast('저장했습니다: ' + filename); return true; } catch (e) { if (e && e.code === 'declined') return false; } }
+  try { const blob = data instanceof Blob ? data : new Blob([data], { type: mime }); const a = el('a', { href: URL.createObjectURL(blob), download: filename }); document.body.append(a); a.click(); a.remove(); return true; }
+  catch (e) { toast('이 화면에서는 파일 저장을 할 수 없습니다. 보관함을 이용하세요.'); return false; }
 }
 function stamp() { const d = new Date(), z = n => String(n).padStart(2, '0'); return d.getFullYear() + z(d.getMonth() + 1) + z(d.getDate()); }
 function fileSave() { saveFile('작도-' + stamp() + '.json', serializeBook(), 'application/json'); }

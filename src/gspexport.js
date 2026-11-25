@@ -427,9 +427,9 @@ function buildGSP() {
   F.raw(head.slice(0, at)); for (const p of pics) F.rec(1300, p); F.raw(head.slice(at)); F.raw(W.out());
   return { bytes: F.out(), skipped, fixed };
 }
-function fileSaveGSP() {
+async function fileSaveGSP() {
   let r; try { r = buildGSP(); } catch (e) { return toast('GSP 문서로 저장하지 못했습니다: ' + e.message); }
   const name = (book.pages[0] && book.pages[0].name || '작도').replace(/[\\/:*?"<>|]/g, '') + '.gsp';
-  saveFile(name, new Blob([r.bytes], { type: 'application/octet-stream' }), 'application/octet-stream');
+  if (!(await saveFile(name, new Blob([r.bytes], { type: 'application/octet-stream' }), 'application/octet-stream'))) return;
   toast('GSP 5 문서로 저장했습니다' + (r.fixed ? ` · 점 ${r.fixed}개는 고정된 점으로` : '') + (r.skipped ? ` · GSP에 없는 객체 ${r.skipped}개는 뺐습니다` : ''));
 }
