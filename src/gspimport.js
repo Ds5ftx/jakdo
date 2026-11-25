@@ -23,7 +23,7 @@ GSPI.markup = (u8, start, end) => {
       }
       let j = i + 1, tag = ''; while (j < end && u8[j] !== 60 && u8[j] !== 62) tag += String.fromCharCode(u8[j++]);
       if (tag === '0' && u8[j] === 62) { flush(); out = out.replace(/ +$/, '') + '\n'; i = j + 1; continue; }
-      if (tag[0] === '!' && u8[j] === 62) { i = j + 1; continue; }
+      if (tag[0] === '!' && u8[j] === 62) { const ch = GSPI.SYM[parseInt(tag.slice(1), 16)]; if (ch) { buf.push(...new TextEncoder().encode(ch)); } i = j + 1; continue; } // <!D7> 같은 Symbol 글꼴 문자
       stack.push(tag[0]); i = j; continue;
     }
     if (c === 62) { const tg = stack.pop(); if (tg === 'H') gap = true; i++; continue; }
@@ -31,6 +31,10 @@ GSPI.markup = (u8, start, end) => {
   }
   flush(); return out.replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').trim();
 };
+GSPI.fam = (n) => /courier|mono|consol|fixed/i.test(n) ? 'mono' : /times|serif|바탕|명조|batang|myungjo|궁서|georgia|garamond|book|symbol|cambria|palatino/i.test(n) ? 'serif' : n ? 'sans' : 'serif';
+// Symbol 글꼴 문자 (<!XX>): 그리스 문자·수학 기호
+GSPI.SYM = (() => { const m = {}; const g = 'ΑΒΧΔΕΦΓΗΙϑΚΛΜΝΟΠΘΡΣΤΥςΩΞΨΖ'; for (let i = 0; i < 26; i++) { m[0x41 + i] = g[i]; m[0x61 + i] = 'αβχδεφγηιϕκλμνοπθρστυϖωξψζ'[i]; }
+  Object.assign(m, { 0xA2: '′', 0xA3: '≤', 0xA5: '∞', 0xB0: '°', 0xB1: '±', 0xB2: '″', 0xB3: '≥', 0xB4: '×', 0xB5: '∝', 0xB6: '∂', 0xB7: '•', 0xB8: '÷', 0xB9: '≠', 0xBA: '≡', 0xBB: '≈', 0xBC: '…', 0xAC: '←', 0xAD: '↑', 0xAE: '→', 0xAF: '↓', 0xAB: '↔', 0xC5: '⊕', 0xC6: '∅', 0xC7: '∩', 0xC8: '∪', 0xC9: '⊃', 0xCA: '⊇', 0xCC: '⊂', 0xCD: '⊆', 0xCE: '∈', 0xCF: '∉', 0xD0: '∠', 0xD1: '∇', 0xD5: '∏', 0xD6: '√', 0xD7: '⋅', 0xD8: '¬', 0xD9: '∧', 0xDA: '∨', 0xDB: '⇔', 0xDE: '⇒', 0xE5: '∑', 0xF2: '∫', 0x5E: '⊥', 0x5C: '∴', 0x22: '∀', 0x24: '∃', 0x27: '∋', 0x40: '≅', 0x7E: '∼' }); return m; })();
 /* 계산식 토큰(u16) → 저장 식 문자열 */
 GSPI.FNS = ['sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'abs', 'sqrt', 'ln', 'log', 'sgn', 'round', 'trunc'];
 GSPI.expr = (toks, ref) => {
@@ -69,6 +73,8 @@ GSPI.parse = (ab) => {
     if (tag === 902) { sec = { type: dv.getUint16(p, true), name: '', objs: [] }; secs.push(sec); }
     else if (tag === 1300 && len > 8) pics.push(GSPI.picture(u8, p, len));
     else if (tag === 1204 && sec && len >= 4) { const n = dv.getUint32(p, true); sec.givens = []; for (let i = 0; i < n && 8 + 4 * i <= len; i++) sec.givens.push(dv.getUint32(p + 4 + 4 * i, true) - 1); }
+    else if (tag === 1201 && sec && len >= 3) { let e = p + 2; while (e < p + len && u8[e]) e++; (sec.fonts = sec.fonts || []).push(GSPI.dec(u8.slice(p + 2, e))); } // 글꼴 표
+    else if (tag === 1203 && sec && len >= 20) (sec.styles = sec.styles || []).push({ f: dv.getUint16(p, true), pt: dv.getUint16(p + 2, true), it: u8[p + 15] === 1, raw: Array.from(u8.slice(p + 4, p + 20)) }); // 글자 모양 표: 글꼴 번호, 크기(pt), 꼴
     else if (tag === 1100 && sec) { let e = p; while (e < p + len && u8[e]) e++; sec.name = GSPI.dec(u8.slice(p, e)); }
     else if (tag === 1000 && sec && len >= 8) { sec.scroll = { x: dv.getInt16(p + 4, true), y: dv.getInt16(p + 6, true) }; if (len >= 18) sec.angle = dv.getUint16(p + 16, true); }
     else if (tag === 2000 && sec) {
@@ -108,6 +114,17 @@ GSPI.build = (F, sec, links) => {
   };
   const pos = (src, tag) => { const r = src.rec[tag]; return r && r.len >= 16 ? { sx: dv.getInt16(r.p + 12, true), sy: dv.getInt16(r.p + 14, true) } : null; };
   const toks = (src) => { const r = src.rec[2311]; if (!r || r.len < 46) return null; const n = dv.getUint16(r.p + 44, true); const t = []; for (let i = 0; i < n; i++) t.push(dv.getUint16(r.p + r.len - 2 * n + 2 * i, true)); return { t, r, n, form: r.len > 48 && dv.getUint16(r.p + 46, true) === 1 ? 'xy' : 'yx' }; }; // 46: 1 이면 x = f(y)
+  const gsty = (src) => { // 2008: 이 페이지 글자 모양 표의 번호
+    const r = src.rec[2008]; if (!r || r.len < 2 || !sec.styles) return null; const st = sec.styles[dv.getUint16(r.p, true)]; if (!st) return null;
+    const name = (sec.fonts || [])[st.f] || ''; return { name, fam: GSPI.fam(name), px: st.pt, it: st.it, g: { f: name, pt: st.pt, raw: st.raw } };
+  };
+  const applySty = (src, o) => {
+    const st = gsty(src); if (!st || !o) return;
+    if (o.t === 'text') { o.d.size = st.px; o.d.font = st.fam; if (st.it) o.d.italic = true; o.d.gsty = st.g; }
+    else if (o.t === 'value') { o.d.size = st.px; o.d.font = st.fam; o.d.gsty = st.g; }
+    else if (o.t === 'button') o.d.gsty = st.g;
+    else if (o.t !== 'coord' && src.rec[2005]) { o.lf = { size: st.px, font: st.fam, italic: st.it, bold: false }; o.gsty = st.g; }
+  };
   const fin = (src, id, opts = {}) => { const o = obj(id); if (!o) return null; if (!opts.noStyle) style(src, o); label(src, o); return id; };
   const text = (src, s, sx, sy, extra = {}) => add({ t: 'text', k: 'cap', d: { text: s, sx, sy, size: 14, ...extra }, color: GSPI.color(...src.rgb) }).id;
   const valAt = (src, k, p, extra = {}) => { const id = mkValue(k, p, extra); const q = pos(src, 2307) || pos(src, 2311); if (q) Object.assign(obj(id).d, q);
@@ -271,7 +288,7 @@ GSPI.build = (F, sec, links) => {
           else if (ty === 4 && P[0] != null) id = add({ t: 'button', k: 'b', p: [P[0]], d: { act: 'scroll', sx, sy, text: txt, mode: sub === 1 ? 'center' : 'tl' } }).id;
           else if (ty === 6 && r.len >= 26) { const n = dv.getUint16(r.p + 24, true); const url = GSPI.dec(u8.slice(r.p + 26, r.p + 26 + Math.min(n, r.len - 26))).replace(/\0.*$/, ''); id = add({ t: 'button', k: 'b', p: [], d: { act: 'url', sx, sy, text: txt, url } }).id; }
           else if (ty === 7) { const p = P.filter(v => v != null && obj(v) && obj(v).t === 'button'); if (p.length) id = add({ t: 'button', k: 'b', p, d: { act: 'present', sx, sy, text: txt, seq: sub === 1 ? 'seq' : 'sim', pause: sub === 1 ? dv.getUint16(r.p + 16, true) : 1 } }).id; }
-          if (id != null) obj(id).hidden = !!(s.fl & 1);
+          if (id != null) { obj(id).hidden = !!(s.fl & 1); applySty(s, obj(id)); obj(id).color = GSPI.color(...s.rgb); }
           map[i] = id; if (id == null) skipped++; return;
         }
       }
@@ -280,7 +297,8 @@ GSPI.build = (F, sec, links) => {
     map[i] = id;
     const o = obj(id); if (o.k === 'xf') o.showLabel = false;
     if (!['value', 'text', 'button', 'coord'].includes(o.t) && s.code !== 54) fin(s, id);
-    else if (o.t === 'value') { label(s, o); o.hidden = !!(s.fl & 3); } // 2: GSP 가 화면에 보이지 않게 둔 값
+    else if (o.t === 'value') { label(s, o); o.hidden = !!(s.fl & 3); if (s.rgb.some(v => v)) o.color = GSPI.color(...s.rgb); } // 2: GSP 가 화면에 보이지 않게 둔 값
+    applySty(s, o);
   });
   return skipped;
 };

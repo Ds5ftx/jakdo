@@ -3,6 +3,41 @@ const GSPX_T = { t902: "hAEAAIYDAAACAAQABAADAAMABAAAAAAAAAAAALsA7J20IOusuOyEnOyd
    GSP 5.03 이 저장한 파일을 본으로 삼아 문서·페이지 머리글을 그대로 쓰고, 객체 레코드만 새로 만든다. */
 const GSPX = {};
 GSPX.b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+/* 글자 모양 표: 객체의 글자 크기·글꼴·기울임 → 페이지의 1201(글꼴)·1203(모양) 표와 각 객체의 2008 번호 */
+GSPX.styleTables = (recs) => {
+  const fonts = [['Times New Roman', 1], ['굴림', 0]], styles = [{ f: 0, pt: 16, raw: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0] }, { f: 1, pt: 16, raw: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0] }];
+  const fontIdx = n => { let i = fonts.findIndex(f => f[0] === n); if (i < 0) { fonts.push([n, 1]); i = fonts.length - 1; } return i; };
+  const want = (o) => {
+    if (!o) return null; let size, fam, it, g;
+    if (o.t === 'text') { size = o.d.size || 15; fam = o.d.font || 'sans'; it = !!o.d.italic; g = o.d.gsty; }
+    else if (o.t === 'value') { if (!o.d.size && !o.d.gsty) return null; size = o.d.size || 14; fam = o.d.font || 'sans'; g = o.d.gsty; it = g ? g.raw[11] === 1 : false; }
+    else if (o.t === 'button') { g = o.d.gsty; size = g ? g.pt : 14; fam = g ? GSPI.fam(g.f) : 'sans'; it = g ? g.raw[11] === 1 : false; }
+    else if (o.lf && o.lf.size) { size = o.lf.size; fam = o.lf.font || 'serif'; it = o.lf.italic ?? true; g = o.gsty; }
+    else return null;
+    const pt = Math.max(6, Math.round(size));
+    if (g && g.pt === pt && GSPI.fam(g.f) === fam) { const raw = g.raw.slice(); raw[10] = it ? 0 : 1; raw[11] = it ? 1 : 0; return { f: fontIdx(g.f), pt, raw }; }
+    const raw = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]; if (it) { raw[10] = 0; raw[11] = 1; }
+    return { f: fontIdx(fam === 'serif' ? 'Times New Roman' : fam === 'mono' ? 'Courier New' : '굴림'), pt, raw };
+  };
+  for (const r of recs) {
+    const at = r.rs.findIndex(x => x[0] === 2008); if (at < 0) continue; const w = want(r.o); if (!w) continue;
+    const key = JSON.stringify(w); let i = styles.findIndex(st => JSON.stringify(st) === key); if (i < 0) { styles.push(w); i = styles.length - 1; }
+    r.rs[at] = [2008, Uint8Array.of(i & 255, i >> 8)];
+  }
+  return { fonts: fonts.map(([n, fl]) => new GSPX.B().u16(fl).bytes(GSPX.utf8(n)).u8(0).get()), styles: styles.map(st => { const b = new GSPX.B().u16(st.f).u16(st.pt); st.raw.forEach(v => b.u8(v)); return b.get(); }) };
+};
+GSPX.swapTables = (raw, tb) => { // 틀의 1201·1203 레코드를 새 표로 바꾼다
+  const out = []; let off = 0, doneF = false, doneS = false; const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+  const put = (tag, u) => { const h = new DataView(new ArrayBuffer(8)); h.setUint32(0, u.length + (u.length & 1), true); h.setUint32(4, tag, true); out.push(new Uint8Array(h.buffer), u); if (u.length & 1) out.push(new Uint8Array(1)); };
+  while (off + 8 <= raw.length) {
+    const len = dv.getUint32(off, true), tag = dv.getUint32(off + 4, true), end = off + 8 + len + (len & 1);
+    if (tag === 1201) { if (!doneF) { tb.fonts.forEach(u => put(1201, u)); doneF = true; } }
+    else if (tag === 1203) { if (!doneS) { tb.styles.forEach(u => put(1203, u)); doneS = true; } }
+    else out.push(raw.subarray(off, end));
+    off = end;
+  }
+  const n = out.reduce((a, u) => a + u.length, 0), r = new Uint8Array(n); let o = 0; for (const u of out) { r.set(u, o); o += u.length; } return r;
+};
 GSPX.cxfPar = (o, P1) => { // 사용자 변환의 상: [상, 원상 객체, 변환의 원상 점, 연쇄…(상으로 끝남)]
   const [x, pre, img] = o.p; const chain = cxfChain(pre, img).map(c => P1(c.id)); if (chain.some(v => !v) || !P1(x) || !P1(pre)) throw 0;
   return [P1(img), P1(x), P1(pre), ...chain];
@@ -145,7 +180,7 @@ function buildGSP() {
         const rs = [];
         if (par && par.length) { const pb = new GSPX.B().u32(par.length); par.forEach(p => pb.u32(p)); rs.push([2002, pb.get()]); }
         rs.push(...extra);
-        recs.push({ h: h.get(), rs }); return recs.length;
+        recs.push({ h: h.get(), rs, o }); return recs.length;
       };
       const P1 = id => idx.get(id);
       const lab = (o, rs) => { const l = o.k === 'xf' || (o.t !== 'point' && !o.showLabel) ? null : GSPX.label(o); if (l) { const at = rs.length && rs[0][0] === 2201 ? 0 : rs.length; rs.splice(at, 0, [2005, l], [2008, Uint8Array.of(0, 0)]); } return rs; }; // 순서: 2002, 종류별 자료, 2005·2008 (단, 자유점은 2005·2008 뒤에 2201)
@@ -361,7 +396,7 @@ function buildGSP() {
         W.raw(GSPX.b64(GSPX_T.t902));
         W.rec(1002, new GSPX.B().zeros(16).u16(GSPX.unit(doc)).u16(1).zeros(4).u32(recs.length).zeros(8).get()); // 도구 머리 (페이지의 1000 과 같은 꼴)
         W.rec(1100, new GSPX.B().bytes(GSPX.utf8(pg.name || '도구')).u8(0).get());
-        W.rec(1201, new GSPX.B().hex('010054696d6573204e657720526f6d616e000000').get()); W.rec(1203, new GSPX.B().hex('0000100001000100010001000100010001000100').get());
+        { const tb = GSPX.styleTables(recs); tb.fonts.forEach(u => W.rec(1201, u)); tb.styles.forEach(u => W.rec(1203, u)); }
         for (const r of recs) { W.rec(2000, r.h); for (const [t, u] of r.rs) W.rec(t, u); W.rec(2007, new Uint8Array(0)); }
         const gb = new GSPX.B().u32(gi.length); gi.forEach(v => gb.u32(v)); W.rec(1204, gb.get()); // 주어진 것(맞춤 순서)
         W.rec(1003, new Uint8Array(0)); W.rec(903, new Uint8Array(0)); return;
@@ -370,7 +405,7 @@ function buildGSP() {
       const p902 = GSPX.b64(GSPX_T.p902), p1000 = GSPX.b64(GSPX_T.p1000); new DataView(p1000.buffer).setUint32(8 + 24, recs.length, true); new DataView(p1000.buffer).setUint16(8 + 16, GSPX.unit(doc), true); new DataView(p1000.buffer).setUint16(8 + 8, 0x4000 + pi * 0x0731 + 17, true); // @16 각 단위(0 라디안, 1 도), @8 페이지마다 다른 값
       W.raw(p902); W.raw(p1000);
       const nm = GSPX.utf8(pg.name || ('페이지 ' + (pi + 1))); W.rec(1100, new GSPX.B().bytes(nm).u8(0).get());
-      const prest = GSPX.b64(GSPX_T.prest); GSPX.setPref(prest, 10042, GSPX.unit(doc)); W.raw(prest);
+      const prest = GSPX.b64(GSPX_T.prest); GSPX.setPref(prest, 10042, GSPX.unit(doc)); W.raw(GSPX.swapTables(prest, GSPX.styleTables(recs)));
       for (const r of recs) { W.rec(2000, r.h); for (const [t, u] of r.rs) W.rec(t, u); W.rec(2007, new Uint8Array(0)); }
       if (csFirst) W.rec(9005, new GSPX.B().u32(csFirst).get());
       W.rec(1001, new Uint8Array(0)); W.rec(903, new Uint8Array(0));

@@ -3678,7 +3678,7 @@ GSPI.markup = (u8, start, end) => {
       }
       let j = i + 1, tag = ''; while (j < end && u8[j] !== 60 && u8[j] !== 62) tag += String.fromCharCode(u8[j++]);
       if (tag === '0' && u8[j] === 62) { flush(); out = out.replace(/ +$/, '') + '\n'; i = j + 1; continue; }
-      if (tag[0] === '!' && u8[j] === 62) { i = j + 1; continue; }
+      if (tag[0] === '!' && u8[j] === 62) { const ch = GSPI.SYM[parseInt(tag.slice(1), 16)]; if (ch) { buf.push(...new TextEncoder().encode(ch)); } i = j + 1; continue; } // <!D7> 같은 Symbol 글꼴 문자
       stack.push(tag[0]); i = j; continue;
     }
     if (c === 62) { const tg = stack.pop(); if (tg === 'H') gap = true; i++; continue; }
@@ -3686,6 +3686,10 @@ GSPI.markup = (u8, start, end) => {
   }
   flush(); return out.replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').trim();
 };
+GSPI.fam = (n) => /courier|mono|consol|fixed/i.test(n) ? 'mono' : /times|serif|바탕|명조|batang|myungjo|궁서|georgia|garamond|book|symbol|cambria|palatino/i.test(n) ? 'serif' : n ? 'sans' : 'serif';
+// Symbol 글꼴 문자 (<!XX>): 그리스 문자·수학 기호
+GSPI.SYM = (() => { const m = {}; const g = 'ΑΒΧΔΕΦΓΗΙϑΚΛΜΝΟΠΘΡΣΤΥςΩΞΨΖ'; for (let i = 0; i < 26; i++) { m[0x41 + i] = g[i]; m[0x61 + i] = 'αβχδεφγηιϕκλμνοπθρστυϖωξψζ'[i]; }
+  Object.assign(m, { 0xA2: '′', 0xA3: '≤', 0xA5: '∞', 0xB0: '°', 0xB1: '±', 0xB2: '″', 0xB3: '≥', 0xB4: '×', 0xB5: '∝', 0xB6: '∂', 0xB7: '•', 0xB8: '÷', 0xB9: '≠', 0xBA: '≡', 0xBB: '≈', 0xBC: '…', 0xAC: '←', 0xAD: '↑', 0xAE: '→', 0xAF: '↓', 0xAB: '↔', 0xC5: '⊕', 0xC6: '∅', 0xC7: '∩', 0xC8: '∪', 0xC9: '⊃', 0xCA: '⊇', 0xCC: '⊂', 0xCD: '⊆', 0xCE: '∈', 0xCF: '∉', 0xD0: '∠', 0xD1: '∇', 0xD5: '∏', 0xD6: '√', 0xD7: '⋅', 0xD8: '¬', 0xD9: '∧', 0xDA: '∨', 0xDB: '⇔', 0xDE: '⇒', 0xE5: '∑', 0xF2: '∫', 0x5E: '⊥', 0x5C: '∴', 0x22: '∀', 0x24: '∃', 0x27: '∋', 0x40: '≅', 0x7E: '∼' }); return m; })();
 /* 계산식 토큰(u16) → 저장 식 문자열 */
 GSPI.FNS = ['sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'abs', 'sqrt', 'ln', 'log', 'sgn', 'round', 'trunc'];
 GSPI.expr = (toks, ref) => {
@@ -3724,6 +3728,8 @@ GSPI.parse = (ab) => {
     if (tag === 902) { sec = { type: dv.getUint16(p, true), name: '', objs: [] }; secs.push(sec); }
     else if (tag === 1300 && len > 8) pics.push(GSPI.picture(u8, p, len));
     else if (tag === 1204 && sec && len >= 4) { const n = dv.getUint32(p, true); sec.givens = []; for (let i = 0; i < n && 8 + 4 * i <= len; i++) sec.givens.push(dv.getUint32(p + 4 + 4 * i, true) - 1); }
+    else if (tag === 1201 && sec && len >= 3) { let e = p + 2; while (e < p + len && u8[e]) e++; (sec.fonts = sec.fonts || []).push(GSPI.dec(u8.slice(p + 2, e))); } // 글꼴 표
+    else if (tag === 1203 && sec && len >= 20) (sec.styles = sec.styles || []).push({ f: dv.getUint16(p, true), pt: dv.getUint16(p + 2, true), it: u8[p + 15] === 1, raw: Array.from(u8.slice(p + 4, p + 20)) }); // 글자 모양 표: 글꼴 번호, 크기(pt), 꼴
     else if (tag === 1100 && sec) { let e = p; while (e < p + len && u8[e]) e++; sec.name = GSPI.dec(u8.slice(p, e)); }
     else if (tag === 1000 && sec && len >= 8) { sec.scroll = { x: dv.getInt16(p + 4, true), y: dv.getInt16(p + 6, true) }; if (len >= 18) sec.angle = dv.getUint16(p + 16, true); }
     else if (tag === 2000 && sec) {
@@ -3763,6 +3769,17 @@ GSPI.build = (F, sec, links) => {
   };
   const pos = (src, tag) => { const r = src.rec[tag]; return r && r.len >= 16 ? { sx: dv.getInt16(r.p + 12, true), sy: dv.getInt16(r.p + 14, true) } : null; };
   const toks = (src) => { const r = src.rec[2311]; if (!r || r.len < 46) return null; const n = dv.getUint16(r.p + 44, true); const t = []; for (let i = 0; i < n; i++) t.push(dv.getUint16(r.p + r.len - 2 * n + 2 * i, true)); return { t, r, n, form: r.len > 48 && dv.getUint16(r.p + 46, true) === 1 ? 'xy' : 'yx' }; }; // 46: 1 이면 x = f(y)
+  const gsty = (src) => { // 2008: 이 페이지 글자 모양 표의 번호
+    const r = src.rec[2008]; if (!r || r.len < 2 || !sec.styles) return null; const st = sec.styles[dv.getUint16(r.p, true)]; if (!st) return null;
+    const name = (sec.fonts || [])[st.f] || ''; return { name, fam: GSPI.fam(name), px: st.pt, it: st.it, g: { f: name, pt: st.pt, raw: st.raw } };
+  };
+  const applySty = (src, o) => {
+    const st = gsty(src); if (!st || !o) return;
+    if (o.t === 'text') { o.d.size = st.px; o.d.font = st.fam; if (st.it) o.d.italic = true; o.d.gsty = st.g; }
+    else if (o.t === 'value') { o.d.size = st.px; o.d.font = st.fam; o.d.gsty = st.g; }
+    else if (o.t === 'button') o.d.gsty = st.g;
+    else if (o.t !== 'coord' && src.rec[2005]) { o.lf = { size: st.px, font: st.fam, italic: st.it, bold: false }; o.gsty = st.g; }
+  };
   const fin = (src, id, opts = {}) => { const o = obj(id); if (!o) return null; if (!opts.noStyle) style(src, o); label(src, o); return id; };
   const text = (src, s, sx, sy, extra = {}) => add({ t: 'text', k: 'cap', d: { text: s, sx, sy, size: 14, ...extra }, color: GSPI.color(...src.rgb) }).id;
   const valAt = (src, k, p, extra = {}) => { const id = mkValue(k, p, extra); const q = pos(src, 2307) || pos(src, 2311); if (q) Object.assign(obj(id).d, q);
@@ -3926,7 +3943,7 @@ GSPI.build = (F, sec, links) => {
           else if (ty === 4 && P[0] != null) id = add({ t: 'button', k: 'b', p: [P[0]], d: { act: 'scroll', sx, sy, text: txt, mode: sub === 1 ? 'center' : 'tl' } }).id;
           else if (ty === 6 && r.len >= 26) { const n = dv.getUint16(r.p + 24, true); const url = GSPI.dec(u8.slice(r.p + 26, r.p + 26 + Math.min(n, r.len - 26))).replace(/\0.*$/, ''); id = add({ t: 'button', k: 'b', p: [], d: { act: 'url', sx, sy, text: txt, url } }).id; }
           else if (ty === 7) { const p = P.filter(v => v != null && obj(v) && obj(v).t === 'button'); if (p.length) id = add({ t: 'button', k: 'b', p, d: { act: 'present', sx, sy, text: txt, seq: sub === 1 ? 'seq' : 'sim', pause: sub === 1 ? dv.getUint16(r.p + 16, true) : 1 } }).id; }
-          if (id != null) obj(id).hidden = !!(s.fl & 1);
+          if (id != null) { obj(id).hidden = !!(s.fl & 1); applySty(s, obj(id)); obj(id).color = GSPI.color(...s.rgb); }
           map[i] = id; if (id == null) skipped++; return;
         }
       }
@@ -3935,7 +3952,8 @@ GSPI.build = (F, sec, links) => {
     map[i] = id;
     const o = obj(id); if (o.k === 'xf') o.showLabel = false;
     if (!['value', 'text', 'button', 'coord'].includes(o.t) && s.code !== 54) fin(s, id);
-    else if (o.t === 'value') { label(s, o); o.hidden = !!(s.fl & 3); } // 2: GSP 가 화면에 보이지 않게 둔 값
+    else if (o.t === 'value') { label(s, o); o.hidden = !!(s.fl & 3); if (s.rgb.some(v => v)) o.color = GSPI.color(...s.rgb); } // 2: GSP 가 화면에 보이지 않게 둔 값
+    applySty(s, o);
   });
   return skipped;
 };
@@ -4091,6 +4109,41 @@ const GSPX_T = { t902: "hAEAAIYDAAACAAQABAADAAMABAAAAAAAAAAAALsA7J20IOusuOyEnOyd
    GSP 5.03 이 저장한 파일을 본으로 삼아 문서·페이지 머리글을 그대로 쓰고, 객체 레코드만 새로 만든다. */
 const GSPX = {};
 GSPX.b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+/* 글자 모양 표: 객체의 글자 크기·글꼴·기울임 → 페이지의 1201(글꼴)·1203(모양) 표와 각 객체의 2008 번호 */
+GSPX.styleTables = (recs) => {
+  const fonts = [['Times New Roman', 1], ['굴림', 0]], styles = [{ f: 0, pt: 16, raw: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0] }, { f: 1, pt: 16, raw: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0] }];
+  const fontIdx = n => { let i = fonts.findIndex(f => f[0] === n); if (i < 0) { fonts.push([n, 1]); i = fonts.length - 1; } return i; };
+  const want = (o) => {
+    if (!o) return null; let size, fam, it, g;
+    if (o.t === 'text') { size = o.d.size || 15; fam = o.d.font || 'sans'; it = !!o.d.italic; g = o.d.gsty; }
+    else if (o.t === 'value') { if (!o.d.size && !o.d.gsty) return null; size = o.d.size || 14; fam = o.d.font || 'sans'; g = o.d.gsty; it = g ? g.raw[11] === 1 : false; }
+    else if (o.t === 'button') { g = o.d.gsty; size = g ? g.pt : 14; fam = g ? GSPI.fam(g.f) : 'sans'; it = g ? g.raw[11] === 1 : false; }
+    else if (o.lf && o.lf.size) { size = o.lf.size; fam = o.lf.font || 'serif'; it = o.lf.italic ?? true; g = o.gsty; }
+    else return null;
+    const pt = Math.max(6, Math.round(size));
+    if (g && g.pt === pt && GSPI.fam(g.f) === fam) { const raw = g.raw.slice(); raw[10] = it ? 0 : 1; raw[11] = it ? 1 : 0; return { f: fontIdx(g.f), pt, raw }; }
+    const raw = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]; if (it) { raw[10] = 0; raw[11] = 1; }
+    return { f: fontIdx(fam === 'serif' ? 'Times New Roman' : fam === 'mono' ? 'Courier New' : '굴림'), pt, raw };
+  };
+  for (const r of recs) {
+    const at = r.rs.findIndex(x => x[0] === 2008); if (at < 0) continue; const w = want(r.o); if (!w) continue;
+    const key = JSON.stringify(w); let i = styles.findIndex(st => JSON.stringify(st) === key); if (i < 0) { styles.push(w); i = styles.length - 1; }
+    r.rs[at] = [2008, Uint8Array.of(i & 255, i >> 8)];
+  }
+  return { fonts: fonts.map(([n, fl]) => new GSPX.B().u16(fl).bytes(GSPX.utf8(n)).u8(0).get()), styles: styles.map(st => { const b = new GSPX.B().u16(st.f).u16(st.pt); st.raw.forEach(v => b.u8(v)); return b.get(); }) };
+};
+GSPX.swapTables = (raw, tb) => { // 틀의 1201·1203 레코드를 새 표로 바꾼다
+  const out = []; let off = 0, doneF = false, doneS = false; const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+  const put = (tag, u) => { const h = new DataView(new ArrayBuffer(8)); h.setUint32(0, u.length + (u.length & 1), true); h.setUint32(4, tag, true); out.push(new Uint8Array(h.buffer), u); if (u.length & 1) out.push(new Uint8Array(1)); };
+  while (off + 8 <= raw.length) {
+    const len = dv.getUint32(off, true), tag = dv.getUint32(off + 4, true), end = off + 8 + len + (len & 1);
+    if (tag === 1201) { if (!doneF) { tb.fonts.forEach(u => put(1201, u)); doneF = true; } }
+    else if (tag === 1203) { if (!doneS) { tb.styles.forEach(u => put(1203, u)); doneS = true; } }
+    else out.push(raw.subarray(off, end));
+    off = end;
+  }
+  const n = out.reduce((a, u) => a + u.length, 0), r = new Uint8Array(n); let o = 0; for (const u of out) { r.set(u, o); o += u.length; } return r;
+};
 GSPX.cxfPar = (o, P1) => { // 사용자 변환의 상: [상, 원상 객체, 변환의 원상 점, 연쇄…(상으로 끝남)]
   const [x, pre, img] = o.p; const chain = cxfChain(pre, img).map(c => P1(c.id)); if (chain.some(v => !v) || !P1(x) || !P1(pre)) throw 0;
   return [P1(img), P1(x), P1(pre), ...chain];
@@ -4233,7 +4286,7 @@ function buildGSP() {
         const rs = [];
         if (par && par.length) { const pb = new GSPX.B().u32(par.length); par.forEach(p => pb.u32(p)); rs.push([2002, pb.get()]); }
         rs.push(...extra);
-        recs.push({ h: h.get(), rs }); return recs.length;
+        recs.push({ h: h.get(), rs, o }); return recs.length;
       };
       const P1 = id => idx.get(id);
       const lab = (o, rs) => { const l = o.k === 'xf' || (o.t !== 'point' && !o.showLabel) ? null : GSPX.label(o); if (l) { const at = rs.length && rs[0][0] === 2201 ? 0 : rs.length; rs.splice(at, 0, [2005, l], [2008, Uint8Array.of(0, 0)]); } return rs; }; // 순서: 2002, 종류별 자료, 2005·2008 (단, 자유점은 2005·2008 뒤에 2201)
@@ -4449,7 +4502,7 @@ function buildGSP() {
         W.raw(GSPX.b64(GSPX_T.t902));
         W.rec(1002, new GSPX.B().zeros(16).u16(GSPX.unit(doc)).u16(1).zeros(4).u32(recs.length).zeros(8).get()); // 도구 머리 (페이지의 1000 과 같은 꼴)
         W.rec(1100, new GSPX.B().bytes(GSPX.utf8(pg.name || '도구')).u8(0).get());
-        W.rec(1201, new GSPX.B().hex('010054696d6573204e657720526f6d616e000000').get()); W.rec(1203, new GSPX.B().hex('0000100001000100010001000100010001000100').get());
+        { const tb = GSPX.styleTables(recs); tb.fonts.forEach(u => W.rec(1201, u)); tb.styles.forEach(u => W.rec(1203, u)); }
         for (const r of recs) { W.rec(2000, r.h); for (const [t, u] of r.rs) W.rec(t, u); W.rec(2007, new Uint8Array(0)); }
         const gb = new GSPX.B().u32(gi.length); gi.forEach(v => gb.u32(v)); W.rec(1204, gb.get()); // 주어진 것(맞춤 순서)
         W.rec(1003, new Uint8Array(0)); W.rec(903, new Uint8Array(0)); return;
@@ -4458,7 +4511,7 @@ function buildGSP() {
       const p902 = GSPX.b64(GSPX_T.p902), p1000 = GSPX.b64(GSPX_T.p1000); new DataView(p1000.buffer).setUint32(8 + 24, recs.length, true); new DataView(p1000.buffer).setUint16(8 + 16, GSPX.unit(doc), true); new DataView(p1000.buffer).setUint16(8 + 8, 0x4000 + pi * 0x0731 + 17, true); // @16 각 단위(0 라디안, 1 도), @8 페이지마다 다른 값
       W.raw(p902); W.raw(p1000);
       const nm = GSPX.utf8(pg.name || ('페이지 ' + (pi + 1))); W.rec(1100, new GSPX.B().bytes(nm).u8(0).get());
-      const prest = GSPX.b64(GSPX_T.prest); GSPX.setPref(prest, 10042, GSPX.unit(doc)); W.raw(prest);
+      const prest = GSPX.b64(GSPX_T.prest); GSPX.setPref(prest, 10042, GSPX.unit(doc)); W.raw(GSPX.swapTables(prest, GSPX.styleTables(recs)));
       for (const r of recs) { W.rec(2000, r.h); for (const [t, u] of r.rs) W.rec(t, u); W.rec(2007, new Uint8Array(0)); }
       if (csFirst) W.rec(9005, new GSPX.B().u32(csFirst).get());
       W.rec(1001, new Uint8Array(0)); W.rec(903, new Uint8Array(0));
