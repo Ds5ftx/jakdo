@@ -81,7 +81,7 @@ GSPI.parse = (ab) => {
       if (tag === 2002) { const n = dv.getUint32(p, true); for (let i = 0; i < n; i++) o.par.push(dv.getUint32(p + 4 + 4 * i, true) - 1); }
       else o.rec[tag] = { p, len };
     }
-    off = p + len;
+    off = p + len + (len & 1); // 길이가 홀수인 레코드(그림 등) 뒤에는 채움 바이트 1개
   }
   return { u8, dv, secs, pics };
 };

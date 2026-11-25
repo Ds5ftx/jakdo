@@ -3729,7 +3729,7 @@ GSPI.parse = (ab) => {
       if (tag === 2002) { const n = dv.getUint32(p, true); for (let i = 0; i < n; i++) o.par.push(dv.getUint32(p + 4 + 4 * i, true) - 1); }
       else o.rec[tag] = { p, len };
     }
-    off = p + len;
+    off = p + len + (len & 1); // 길이가 홀수인 레코드(그림 등) 뒤에는 채움 바이트 1개
   }
   return { u8, dv, secs, pics };
 };
@@ -4062,7 +4062,7 @@ GSPX.b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 GSPX.W = class {
   constructor() { this.parts = []; this.n = 0; }
   raw(u8) { this.parts.push(u8); this.n += u8.length; }
-  rec(tag, body) { if (body.length % 2) { const b2 = new Uint8Array(body.length + 1); b2.set(body); body = b2; } const h = new DataView(new ArrayBuffer(8)); h.setUint32(0, body.length, true); h.setUint32(4, tag, true); this.raw(new Uint8Array(h.buffer)); this.raw(body); }
+  rec(tag, body) { const n = body.length; if (n % 2) { const b2 = new Uint8Array(n + 1); b2.set(body); body = b2; } const h = new DataView(new ArrayBuffer(8)); h.setUint32(0, tag === 1300 ? n : body.length, true); h.setUint32(4, tag, true); this.raw(new Uint8Array(h.buffer)); this.raw(body); } // 홀수 길이: 그림(1300)은 GSP처럼 길이는 그대로 두고 채움 바이트만 붙이고, 나머지는 채움 바이트를 길이에 포함
   out() { const u = new Uint8Array(this.n); let o = 0; for (const p of this.parts) { u.set(p, o); o += p.length; } return u; }
 };
 GSPX.B = class { // 작은 바이트 버퍼
@@ -4072,7 +4072,7 @@ GSPX.B = class { // 작은 바이트 버퍼
   i16(v) { return this.u16(v < 0 ? 0x10000 + Math.round(v) : Math.round(v)); }
   u32(v) { for (let i = 0; i < 4; i++) this.a.push((v >>> (8 * i)) & 255); return this; }
   f64(v) { const d = new DataView(new ArrayBuffer(8)); d.setFloat64(0, v, true); this.a.push(...new Uint8Array(d.buffer)); return this; }
-  bytes(u) { this.a.push(...u); return this; }
+  bytes(u) { for (let i = 0; i < u.length; i += 8192) this.a.push(...u.subarray ? u.subarray(i, i + 8192) : u.slice(i, i + 8192)); return this; } // 큰 그림도 (인수 개수 제한 피하기)
   hex(h) { for (let i = 0; i < h.length; i += 2) this.a.push(parseInt(h.substr(i, 2), 16)); return this; }
   zeros(n) { for (let i = 0; i < n; i++) this.a.push(0); return this; }
   get() { return Uint8Array.from(this.a); }
