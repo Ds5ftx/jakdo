@@ -140,12 +140,17 @@ GSPI.build = (F, sec, links) => {
     if (r && r.len >= 20 && k !== 'func' && k !== 'param') { const n = dv.getUint16(r.p + 16, true); if (n > 3 && 18 + n <= r.len) { try { const nm = GSPI.markup(u8, r.p + 18, r.p + 18 + n).trim(); if (nm) obj(id).d.name = nm; } catch (e) { } }
       else if (n === 3 && r.len >= 28 && dv.getUint16(r.p + 26, true) === 3) { const l = src.rec[2005]; if (l && l.len >= 24) { const m = dv.getUint16(l.p + 22, true); const nm = GSPI.dec(u8.slice(l.p + 24, l.p + 24 + Math.min(m, l.len - 24))).replace(/\0.*$/, '').trim(); if (nm) obj(id).d.name = nm.replace(/\[(\d+)\]/g, (q, d) => [...d].map(c => String.fromCharCode(0x2080 + +c)).join('')); } } } // 방식 3: 이름표(2005)를 측정값 이름으로
     return id; };
+  const img77 = {}; // 반복된 상(77) 객체 번호 → [반복, 원본]: 숨기기/보이기 버튼이 가리킬 수 있다
   sec.objs.forEach((s, i) => {
     let P = s.par.map(j => map[j]); let id = null;
     if (s.k === 23 || s.k === 59 || s.k === 19) P = P.filter(v => v != null && v !== -1);
     if (s.code === 77) { // 반복된 상: [원본, 반복] — GSP 가 실제로 그리는 객체와 그 색·숨김
-      const it = P[1] != null && obj(P[1]); if (it && it.t === 'iter' && P[0] != null) { (it.d.show = it.d.show || {})[P[0]] = { color: GSPI.color(...s.rgb), hidden: !!(s.fl & 1) }; }
+      const it = P[1] != null && obj(P[1]); if (it && it.t === 'iter' && P[0] != null) { (it.d.show = it.d.show || {})[P[0]] = { color: GSPI.color(...s.rgb), hidden: !!(s.fl & 1) }; img77[i] = [P[1], P[0]]; }
       map[i] = null; return;
+    }
+    if (s.code === 88 && img77[s.par[0]]) { // 반복의 종점: [반복된 상(77)] → 마지막 단계에서 그 점의 상
+      const [itId, src] = img77[s.par[0]], it = obj(itId), k = it.d.pre ? it.d.pre.indexOf(src) : -1;
+      const o = add({ t: 'point', k: 'term', p: [itId], d: k >= 0 ? { i: k } : { src } }); map[i] = o.id; fin(s, o.id); applySty(s, o); return;
     }
     if (s.code !== 76 && s.code !== 89 && P.some(v => v == null)) { map[i] = null; skipped++; (GSPI.miss = GSPI.miss || []).push('dep:' + s.code + '/' + s.k + '@' + sec.type); return; }
     const po = j => obj(P[j]);
@@ -224,6 +229,8 @@ GSPI.build = (F, sec, links) => {
         case 113: case 114: case 115: id = add({ t: 'amark', k: 'm', p: [P[0], P[1], P[2]], d: { n: s.code - 112 } }).id; break; // 각 표시 (호 1·2·3겹)
         case 24: { const r = s.rec[2003]; id = mkXf(P[0], { type: 'tr', distV: P[1], ang: D(r, 20) }); break; } // 측정한 거리만큼, 정한 각도로 평행이동
         case 29: id = mkXf(P[0], { type: 'rot', c: P[1], angV: P[2] }); break; // 측정한 각만큼 회전
+        case 119: { const m = obj(P[2]); if (!m || m.t !== 'amark') break; id = mkXf(P[0], { type: 'rot', c: P[1], angP: m.p.slice() }); break; } // 표시한 각(각 표시)만큼 회전
+        case 120: { const m = obj(P[0]); if (!m || m.t !== 'amark') break; id = valAt(s, 'angle', m.p.slice()); obj(id).d.mark = P[0]; break; } // 각 표시의 크기
         case 31: id = mkXf(P[0], { type: 'dil', c: P[1], rS: [P[2], P[3]] }); break; // 두 선분의 비로 확대
         case 108: id = add({ t: 'picture', k: 'xf', p: [P[0]], d: { xf: { type: 'tr', mode: 'rect', dx: 0, dy: 0 }, crop: P[1] }, color: 'ink' }).id; break; // 다각형으로 잘라 낸 그림
         case 35: id = mkLocus(P[2], P[0]); break;
@@ -269,6 +276,12 @@ GSPI.build = (F, sec, links) => {
         // 좌표계
         case 52: { const r = s.rec[2003]; if (P[0] != null) { pend.O = P[0]; pend.V = null; obj(P[0]).isOrigin = true; } const o = add({ t: 'point', k: 'unit', p: [P[0]], d: { u: D(r, 4) / PXCM } }); giveLabel(o, false); o.ps = 1; id = o.id; pend.U = id; break; }
         case 54: id = P[0]; break;
+        case 59: { // 원점과 단위 길이 선분으로 정한 좌표계의 x축
+          const O = P[0]; obj(O).isOrigin = true; const u = add({ t: 'point', k: 'unitlen', p: [O, P[1]], color: 'ink', ps: 1 }); u.hidden = true; giveLabel(u, false);
+          pend.O = O; pend.U = u.id; pend.V = null;
+          const L = mkStraight('line', O, u.id); const l = obj(L); if (!l) { map[i] = -1; return; } l.hidden = true; l.isAxis = 'x'; map[i] = L; return;
+        }
+        case 56: if (pend.U == null) break; id = pend.U; break; // 위 좌표계의 y 단위(x 와 같음)
         case 55: { const r = s.rec[2003]; const O = obj(P[0]).p[0]; const o = add({ t: 'point', k: 'unit', p: [O], d: { u: D(r, 4) / PXCM, axis: 'y' } }); giveLabel(o, false); o.ps = 1; id = o.id; pend.V = id; break; }
         case 121: map[i] = null; return; // 슬라이더 눈금(장식)
         case 58: { // 축: 그 위의 점(축 위의 점)을 위해 숨은 직선으로 둔다
@@ -289,6 +302,10 @@ GSPI.build = (F, sec, links) => {
         // 측정값
         case 36: id = valAt(s, 'len', [P[0]]); break;
         case 37: id = valAt(s, 'dist', [P[0], P[1]]); break;
+        case 38: id = valAt(s, 'dist', [P[0], P[1]]); break; // 점과 직선류 사이의 거리
+        case 40: id = valAt(s, 'circum', [P[0]]); break; // 원의 둘레
+        case 74: id = valAt(s, 'ptval', [P[0]]); obj(id).d.fx = true; break; // 함수 그래프 위 점의 독립변수 값 (x_A)
+        case 110: { const o = add({ t: 'point', k: 'plot', p: [P[1], P[0]], d: { xV: P[0], y: 0, polar: false } }); giveLabel(o, false); id = o.id; break; } // 값을 x축 위에 점으로
         case 41: id = valAt(s, 'angle', [P[0], P[1], P[2]]); break;
         case 42: id = valAt(s, 'area', [P[0]]); break;
         case 44: id = valAt(s, 'arclen', [P[0]]); break;
@@ -315,7 +332,7 @@ GSPI.build = (F, sec, links) => {
           const sx = dv.getInt16(r.p + 20, true), sy = dv.getInt16(r.p + 22, true);
           const tmp = {}; label(s, tmp); const txt = tmp.label || '버튼';
           if (ty === 5) { id = add({ t: 'button', k: 'b', p: [], d: { act: 'link', sx, sy, text: txt } }).id; links.push({ id, page: sub }); }
-          else if ((ty === 0 || ty === 1) && sub !== 3) id = add({ t: 'button', k: 'b', p: P.filter(v => v != null), d: { act: 'hide', sx, sy, text: txt } }).id; // 숨기기/보이기: ty 0 = 지금 보임(누르면 숨김), 1 = 지금 숨김
+          else if ((ty === 0 || ty === 1) && sub !== 3) { id = add({ t: 'button', k: 'b', p: P.filter(v => v != null), d: { act: 'hide', sx, sy, text: txt } }).id; const ii = s.par.map(j => img77[j]).filter(Boolean); if (ii.length) obj(id).d.iimg = ii; } // 숨기기/보이기: ty 0 = 지금 보임(누르면 숨김), 1 = 지금 숨김
           else if (ty === 2) id = add({ t: 'button', k: 'b', p: P.filter(v => v != null), d: { act: 'anim', sx, sy, text: txt } }).id;
           else if (ty === 3 && P.length === 2 && P.every(v => v != null)) id = add({ t: 'button', k: 'b', p: P.slice(), d: { act: 'move', sx, sy, text: txt, speed: [2, 6, 15, 0][sub] ?? 6 } }).id;
           else if (ty === 4 && P[0] != null) id = add({ t: 'button', k: 'b', p: [P[0]], d: { act: 'scroll', sx, sy, text: txt, mode: sub === 1 ? 'center' : 'tl' } }).id;

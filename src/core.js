@@ -386,7 +386,7 @@ const COMP = {
       }
       case 'mid': { const g = PG(o, Gx, 0); return g ? lerp(g.a, g.b, 0.5) : null; }
       case 'onv': { const po = obj(o.p[0]), g = PG(o, Gx, 0), v = valNum(o.p[1], Gx); return g && isFinite(v) ? pathAt(po, g, v) : null; }
-      case 'term': { const g = PG(o, Gx, 0); return g && g.term && g.term[d.i] ? { ...g.term[d.i] } : null; }
+      case 'term': { const g = PG(o, Gx, 0); if (d.src != null) { if (g && g.termG && g.termG[d.src]) return { ...g.termG[d.src] }; const b = g && g.depth === 0 && Gx[d.src]; return b && isFinite(b.x) ? { ...b } : null; } /* 반복 0번이면 처음 상 그대로 */ return g && g.term && g.term[d.i] ? { ...g.term[d.i] } : null; } // src: 원상 밖 연쇄 점의 마지막 상
       case 'cxf': { const g = PG(o, Gx, 0); if (!g) return null; const q = cxfMapper(o.p[1], o.p[2], Gx)(g); return okp(q) ? { x: q.x, y: q.y } : null; }
       case 'xf': { const g = PG(o, Gx, 0); const M = buildMap(d.xf, Gx); return g && M ? xformGeom('point', g, M) : null; }
       case 'unit': { const g = PG(o, Gx, 0); return g ? (d.axis === 'y' ? { x: g.x, y: g.y + d.u } : { x: g.x + d.u, y: g.y }) : null; }

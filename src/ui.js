@@ -648,10 +648,10 @@ let motionPinned = false;
 function runButton(o) {
   if (runButtonExt(o)) return;
   if (o.d.act === 'hide') {
-    const ts = o.p.map(obj).filter(Boolean); if (!ts.length) return;
+    const ts = o.p.map(obj).filter(Boolean), ii = (o.d.iimg || []).map(([it, src]) => obj(it) && obj(it).d.show && obj(it).d.show[src]).filter(Boolean); if (!ts.length && !ii.length) return; // ii: 반복된 상(GSP 77)의 보임 상태
     const t0 = String(o.d.text || ''), lead = /^\s*(보이기|숨기기|Show|Hide)(?=[\s:]|$)/i.exec(t0); // GSP: 「보이기: 이름」「Show 이름」처럼 앞에 붙는다
-    const show = o.d.mode === 'show' ? true : o.d.mode === 'hideonly' ? false : lead ? /^(보이기|show)$/i.test(lead[1]) : ts.some(t => t.hidden);
-    snap(); ts.forEach(t => { t.hidden = !show; });
+    const show = o.d.mode === 'show' ? true : o.d.mode === 'hideonly' ? false : lead ? /^(보이기|show)$/i.test(lead[1]) : ts.some(t => t.hidden) || ii.some(t => t.hidden);
+    snap(); ts.forEach(t => { t.hidden = !show; }); ii.forEach(t => { t.hidden = !show; });
     if (!o.d.mode) o.d.text = lead ? t0.replace(lead[1], /[가-힣]/.test(lead[1]) ? (show ? '숨기기' : '보이기') : ((w => lead[1][0] === lead[1][0].toLowerCase() ? w.toLowerCase() : w)(show ? 'Hide' : 'Show'))) : t0.replace(/(숨기기|보이기)$/, show ? '숨기기' : '보이기');
     refresh();
   }

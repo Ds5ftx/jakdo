@@ -65,7 +65,7 @@ GSPX.B = class { // 작은 바이트 버퍼
 GSPX.utf8 = s => new TextEncoder().encode(s);
 GSPX.rgb = c => { const h = c === 'ink' || !c ? '#000000' : col(c); const m = /^#([0-9a-f]{6})/i.exec(h); const v = m ? m[1] : '000000'; return [0, 2, 4].map(i => parseInt(v.substr(i, 2), 16)); };
 /* 객체 종류 → GSP 의 (분류 c, 종류 k) */
-GSPX.CK = { point: [1, 4], segment: [2, 14], line: [2, 12], ray: [2, 13], circle: [3, 28], arc: [12, 67], cinterior: [5, 16] };
+GSPX.CK = { point: [1, 4], segment: [2, 14], line: [2, 12], ray: [2, 13], circle: [3, 28], arc: [12, 67], cinterior: [5, 16], sector: [13, 68], arcseg: [13, 69] };
 GSPX.polyK = n => n >= 3 && n <= 6 ? 49 + n : 15;
 GSPX.FN = { sin: 0, cos: 1, tan: 2, asin: 3, acos: 4, atan: 5, abs: 6, sqrt: 7, ln: 8, log: 9, sgn: 10, round: 11, trunc: 12 };
 /* 저장 식(#id 참조) → GSP 토큰. 부모 목록(refs)을 함께 돌려준다 */
@@ -183,7 +183,7 @@ function buildGSP() {
         rs.push(...extra);
         recs.push({ h: h.get(), rs, o }); return recs.length;
       };
-      const P1 = id => idx.get(id);
+      const P1 = id => idx.get(id); const img77 = new Map(); // 반복 id:원본 id → 반복된 상(77) 번호
       const lab = (o, rs) => { const l = o.k === 'xf' || (o.t !== 'point' && !o.showLabel) ? null : GSPX.label(o); if (l) { const at = rs.length && rs[0][0] === 2201 ? 0 : rs.length; rs.splice(at, 0, [2005, l], [2008, Uint8Array.of(0, 0)]); } return rs; }; // 순서: 2002, 종류별 자료, 2005·2008 (단, 자유점은 2005·2008 뒤에 2201)
       const freePt = (o, x, y, opt = {}) => { const [px, py] = PX(x, y); return emit(0, 1, opt.k || 4, [], o, lab(o, [[2201, new GSPX.B().f64(px).f64(py).get()]]), { e: 0x221 }); };
       const valRec = (o) => o.d.name ? [[2307, GSPX.disp(o.d.sx || 10, o.d.sy || 10, 3).get()], [2005, GSPX.valLabel(o.d.name)], [2008, Uint8Array.of(1, 0)]] : [[2307, GSPX.disp(o.d.sx || 10, o.d.sy || 10).get()], [2008, Uint8Array.of(1, 0)]]; // 이름 있는 측정값: 표시 방식 3 + 이름표(아래 첨자는 [n])
@@ -199,7 +199,10 @@ function buildGSP() {
       // 가져온 좌표축(숨은 보조 직선)은 GSP 의 축 객체(58)로 되돌린다
       const axisAux = new Set(); doc.objs.forEach(q => { if (q.t === 'point' && q.d && q.d.pich && q.hidden && doc.objs.every(c => !c.p.includes(q.id) || (c.t === 'picture' && c.k === 'pts'))) axisAux.add(q.id); }); // 그림의 보조 꼭짓점: 그림은 자기 행렬로 저장되므로 따로 쓰지 않음
       doc.objs.forEach(l => { if (!l.isAxis) return; axisAux.add(l.id); const q = obj(l.p[1]); if (q && q.k === 'xf' && q.hidden && doc.objs.every(c => !c.p.includes(q.id) || c.isAxis)) axisAux.add(q.id); });
-      for (const o of doc.objs) {
+      // 좌표계는 그 원점·단위점 바로 뒤에 쓴다: GSP 는 축 위의 점이 좌표계(61)보다 앞에 올 수 있고, 축(58)은 좌표계를 쓸 때 함께 나온다
+      const order = doc.objs.filter(o => o.t !== 'coord' || o.k === 'given');
+      for (const c of doc.objs) { if (c.t !== 'coord' || c.k === 'given') continue; const last = Math.max(-1, ...c.p.map(id => order.findIndex(x => x.id === id))); order.splice(last + 1, 0, c); }
+      for (const o of order) {
         let id = null; const g = G[o.id];
         if (axisAux.has(o.id)) continue;
         const par = o.p.map(P1);
@@ -215,7 +218,17 @@ function buildGSP() {
             const cl = GSPX.label({ label: 'S[1]', showLabel: false }); cl[4] = 1; // 세 번째 값 1: 문서의 좌표계에 자동으로 대입
             id = emit(0, 1, 39, [], null, [[2005, cl], [2008, Uint8Array.of(0, 0)], [2201, new GSPX.B().zeros(16).get()]], { e: 0x121 });
           } else if (o.t === 'coord') {
-            const [O, U, Vy] = o.p; const iO = P1(O), iU = P1(U); if (!iO || !iU) throw 0;
+            const [O, U, Vy] = o.p; const UL = obj(U) && obj(U).k === 'unitlen' && isStraight(obj(obj(U).p[1])) ? obj(U) : null;
+            if (UL && !Vy) { // 원점 + 단위 길이 선분: GSP 59(x축)·56(y 단위)·58(y축)·61
+              const iO = P1(O), iS = P1(UL.p[1]); if (!iO || !iS) throw 0;
+              const ax = emit(59, 9, 38, [iO, iS], o, [[2309, new GSPX.B().u32(1).get()], [2005, GSPX.label({ label: 'x' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
+              const iY = emit(56, 1, 40, [ax], null, [[2003, new GSPX.B().u32(56).f64(10).get()]], { e: 0x221, fl: 4 });
+              const ay = emit(58, 9, 38, [iO, iY], o, [[2309, new GSPX.B().u32(0).get()], [2005, GSPX.label({ label: 'y' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
+              id = emit(61, 8, 39, [ax, ay], { color: '#c0c0c0', hidden: o.hidden || o.d.grid === false }, [[2308, new GSPX.B().u32(1).u32(0).get()]], { e: 0x120 });
+              if (!csFirst) csFirst = id;
+              doc.objs.forEach(l => { if (l.isAxis && l.p[0] === O) idx.set(l.id, l.p[1] === U ? ax : ay); });
+            } else {
+            const iO = P1(O), iU = P1(U); if (!iO || !iU) throw 0;
             const u = (obj(U).d.u || 1) * PXCM;
             const ax = emit(58, 9, 38, [iO, iU], o, [[2309, new GSPX.B().u32(1).get()], [2005, GSPX.label({ label: 'x' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
             let iY;
@@ -225,6 +238,9 @@ function buildGSP() {
             id = emit(61, 8, 39, [ax, ay], { color: '#c0c0c0', hidden: o.hidden || o.d.grid === false }, [[2308, new GSPX.B().u32(1).u32(0).get()]], { e: 0x120 });
             if (!csFirst) csFirst = id;
             doc.objs.forEach(l => { if (l.isAxis && l.p[0] === O) idx.set(l.id, l.p[1] === U ? ax : ay); });
+            }
+          } else if (o.t === 'point' && o.k === 'unitlen' && isStraight(obj(o.p[1])) && doc.objs.some(c => c.t === 'coord' && c.p[1] === o.id && !c.p[2])) {
+            idx.set(o.id, -1); continue; // 좌표계를 만들 때 59 로 씀
           } else if (o.t === 'point') {
             const pk = o.k, A = obj(o.p[0]), B = obj(o.p[1]);
             if (pk === 'mid' && o.p.length === 1 && A && A.t === 'segment') id = emit(1, 1, 11, par, o, lab(o, []), { e: 0x221 });
@@ -235,8 +251,11 @@ function buildGSP() {
               else if ((sA && cB) || (cA && sB)) { const L = sA ? A : B; if (L.k === 'perp' && GSPI.opt.perp) i = 1 - i; code = i ? 12 : 11; }
               else if (cA && cB) { if (GSPI.opt.cc) i = 1 - i; code = i ? 14 : 13; }
               if (code == null && (A.t === 'polygon' || B.t === 'polygon') && (sA || sB) && !(o.d.i > 0)) id = emit(93, 1, 45, sA ? [P1(A.id), P1(B.id)] : [P1(B.id), P1(A.id)], o, lab(o, []), { e: 0x221 }); // 직선류와 다각형 둘레의 교점
-              else if (code == null && (A.t === 'locus' || B.t === 'locus') && (sA || sB)) id = emit(98, 1, 45, sA ? [P1(A.id), P1(B.id)] : [P1(B.id), P1(A.id)], o, lab(o, [[2003, new GSPX.B().u32(98).u32(o.d.i || 0).get()]]), { e: 0x221 }); // 직선류와 자취의 교점
+              else if (code == null && (A.t === 'locus' || B.t === 'locus' || A.t === 'fplot' || B.t === 'fplot')) id = emit(98, 1, 45, (A.t === 'locus' || A.t === 'fplot') && !(B.t === 'locus' || B.t === 'fplot') ? [P1(B.id), P1(A.id)] : [P1(A.id), P1(B.id)], o, lab(o, [[2003, new GSPX.B().u32(98).u32(o.d.i || 0).get()]]), { e: 0x221 }); // 직선류와 자취의 교점
               else { if (code == null) throw 0; id = emit(code, 1, 45, par, o, lab(o, []), { e: 0x221 }); }
+            } else if (pk === 'term' && A && A.t === 'iter') { // 반복의 종점: 그 점의 반복된 상(77) 위에
+              const src = o.d.src != null ? o.d.src : A.d.pre && A.d.pre[o.d.i || 0], i77 = src != null && img77.get(A.id + ':' + src); if (!i77) throw 0;
+              id = emit(88, 1, 4, [i77], o, lab(o, []), { e: 0x221 });
             } else if (pk === 'onv' && A && B) { id = emit(95, 1, 56, [P1(B.id), P1(A.id)], o, lab(o, []), { e: 0x221 }); // 값으로 정한 경로 위의 점
             } else if (pk === 'cxf') { id = emit(101, 1, 89, GSPX.cxfPar(o, P1), o, lab(o, []), { e: 0x221 }); // 사용자 변환의 상
             } else if (pk === 'on' && A) {
@@ -326,7 +345,10 @@ function buildGSP() {
             id = emit(72, 6, 58, [P1(fn.id), P1(o.p[0])], o, [[2306, new GSPX.B().f64(o.d.xmin ?? -10).f64(o.d.xmax ?? 10).u32(o.d.n || 750).u16(fn.d.form === 'xy' ? 1 : 0).u32(3).zeros(6).u16(1).zeros(6).get()]]);
           } else if (id == null && o.t === 'value') {
             const M = { ratio3: [47, 51], len: [36, 48], dist: [37, 48], angle: [41, 49], area: [42, 50], arclen: [44, 48], radius: [46, 48], x: [65, 51], y: [66, 51], slope: [87, 51], ptval: [94, 51] }[o.k];
-            if (M) { let p = par; if (o.k === 'ptval') { const pt = obj(o.p[0]); if (!pt || pt.k !== 'on') throw 0; p = [P1(pt.id), P1(pt.p[0])]; } if ((o.k === 'x' || o.k === 'y' || o.k === 'slope') && p.length === 1) { const cs = doc.coordId && P1(doc.coordId); if (!cs) throw 0; p = [p[0], cs]; } id = emit(M[0], 7, M[1], p, o, valRec(o)); }
+            if (o.k === 'dist' && isStraight(obj(o.p[1]))) id = emit(38, 7, 48, par, o, valRec(o)); // 점과 직선류 사이의 거리
+            else if (o.k === 'circum') id = emit(40, 7, 48, par, o, valRec(o)); // 원의 둘레
+            else if (o.k === 'ptval' && o.d.fx) { const pt = obj(o.p[0]), cs = doc.coordId && P1(doc.coordId); if (!pt || !cs) throw 0; let txt = ''; try { txt = valueText(o); } catch (e) { } id = emit(74, 0, 34, [P1(pt.id), cs], o, [[2300, GSPX.capRec(GSPX.markup(txt || 'x'), o.d.sx || 10, o.d.sy || 10)], [2008, Uint8Array.of(0, 0)]]); } // 함수 그래프 위 점의 x 값
+            else if (M) { let p = par; if (o.k === 'ptval') { const pt = obj(o.p[0]); if (!pt || pt.k !== 'on') throw 0; p = [P1(pt.id), P1(pt.p[0])]; } if ((o.k === 'x' || o.k === 'y' || o.k === 'slope') && p.length === 1) { const cs = doc.coordId && P1(doc.coordId); if (!cs) throw 0; p = [p[0], cs]; } id = emit(M[0], 7, M[1], p, o, valRec(o)); }
             else if (o.k === 'coords') { let p = par.slice(0, 2); if (p.length === 1) { const cs = doc.coordId && P1(doc.coordId); if (!cs) throw 0; p = [p[0], cs]; } let txt = ''; try { txt = valueText(o); } catch (e) { } id = emit(49, 0, 34, p, o, [[2300, GSPX.capRec(GSPX.markup(txt || '( , )'), o.d.sx || 10, o.d.sy || 10)], [2008, Uint8Array.of(0, 0)]]); }
             else if (o.k === 'eq') { const L = obj(o.p[0]); const code = L && isStraight(L) ? 50 : L && L.t === 'circle' ? 51 : 0; if (!code) throw 0; let p = par.slice(0, 2); if (p.length === 1) { const cs = doc.coordId && P1(doc.coordId); if (!cs) throw 0; p = [p[0], cs]; } let txt = ''; try { txt = valueText(o); } catch (e) { } id = emit(code, 0, code === 50 ? 36 : 37, p, o, [[2300, GSPX.capRec(GSPX.markup(txt || 'y = '), o.d.sx || 10, o.d.sy || 10)], [2008, Uint8Array.of(0, 0)]]); }
             else if (o.k === 'calc') { const T = GSPX.tokens(o.d.expr); const uk = { dist: 48, angle: 49, area: 50 }[g && g.u] || 51; id = emit(T.refs.length ? 48 : 0, 11, uk, T.refs.map(P1), o, [[2311, exprRec(o, T.toks, 'calc')], ...(o.d.name ? [[2005, GSPX.valLabel(o.d.name)]] : []), ...(T.refs.length ? [[2008, Uint8Array.of(1, 0)]] : [[2008, Uint8Array.of(0, 0)], [2211, GSPX.rect(o)]])]); } // 이름 있는 계산값: 방식 3 + 이름표, 부모 없는 상수 식은 0번 객체(2211 위치 사각형 필요)
@@ -392,7 +414,7 @@ function buildGSP() {
               const sh = o.d.show && o.d.show[c.id];
               if (o.d.show ? !sh : ((c.hidden && !o.d.drawHidden) || (c.t === 'point' && o.d.ptsToo === false))) continue;
               const cc = sh ? { ...c, color: sh.color, hidden: sh.hidden } : c;
-              emit(77, 15, 65, [P1(c.id), id], cc, [], c.t === 'point' ? { e: 0x221 } : {});
+              img77.set(o.id + ':' + c.id, emit(77, 15, 65, [P1(c.id), id], cc, [], c.t === 'point' ? { e: 0x221 } : {}));
             }
           } else if (id == null && o.t === 'table' && o.k === 'iter') {
             const p = [P1(o.p[0]), ...o.p.slice(1).map(P1).filter(v => v > 0)];
@@ -405,7 +427,7 @@ function buildGSP() {
             const r2310 = new GSPX.B().hex('06090000').u32(0x18).u32(0x0c).u16(ty[0]).u16(ty[1]).zeros(4).i16(sx).i16(sy).get();
             const w = 16 + 8 * String(o.d.text || '').length;
             if (link) id = emit(0, 10, 23, [], o, [[2310, r2310], [2005, l], [2008, Uint8Array.of(0, 0)], [2210, new GSPX.B().i16(sx).i16(sy).i16(sx + w).i16(sy + 23).get()]]);
-            else { const p = [...new Set(par.filter(v => v > 0))]; if (!p.length) throw 0; id = emit(62, 10, 23, p, o, [[2310, r2310], [2005, l], [2008, Uint8Array.of(0, 0)]]); }
+            else { const p = [...new Set([...par.filter(v => v > 0), ...(o.d.iimg || []).map(([a, b]) => img77.get(a + ':' + b)).filter(v => v > 0)])]; if (!p.length) throw 0; id = emit(62, 10, 23, p, o, [[2310, r2310], [2005, l], [2008, Uint8Array.of(0, 0)]]); }
           }
           if (id == null) throw 0;
         } catch (err) {

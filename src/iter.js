@@ -76,7 +76,7 @@ function computeIter(o, Gx) {
   const show = o.d.show; // GSP 에서 불러온 반복: 그려지는 객체가 정해져 있음
   const drawIds = show ? chain.filter(x => show[x.id] && !show[x.id].hidden && x.t !== 'value').map(x => x.id) : chain.filter(x => (!x.hidden || o.d.drawHidden) && x.t !== 'value' && (o.d.ptsToo !== false || x.t !== 'point')).map(x => x.id);
   const pcIds = new Set(drawIds.filter(id => obj(id).pc)); // 매개변수 색은 단계마다 그 단계의 값으로
-  let frontier = [pre.map(id => Gx[id])]; let term = null; const CAP = o.d.cap || doc.prefs.iterCap || 30000;
+  let frontier = [pre.map(id => Gx[id])]; let term = null, termG = null; const CAP = o.d.cap || doc.prefs.iterCap || 30000;
   for (let L = 1; L <= depth; L++) {
     const next = [];
     for (const vals of frontier) {
@@ -89,14 +89,14 @@ function computeIter(o, Gx) {
         pre.forEach((id, i) => Gt[id] = img[i]);
         for (const c of chain) Gt[c.id] = compute(c, Gt);
         if (!o.d.final || L === depth) for (const id of drawIds) if (Gt[id]) { const it = { id, L, g: copyGeom(Gt[id]) }; if (pcIds.has(id)) it.col = paramColor(obj(id), Gt); items.push(it); }
-        if (m === 0 && next.length === 0) { levels[L] = Object.fromEntries(valueIds.map(id => [id, Gt[id] ? Gt[id].v : null])); term = img; }
+        if (m === 0 && next.length === 0) { levels[L] = Object.fromEntries(valueIds.map(id => [id, Gt[id] ? Gt[id].v : null])); term = img; termG = Object.fromEntries(chain.filter(c => c.t === 'point' && Gt[c.id]).map(c => [c.id, { ...Gt[c.id] }])); }
         next.push(img);
-        if (items.length > CAP) { return { items, levels, term, truncated: true, depth: L }; }
+        if (items.length > CAP) { return { items, levels, term, termG, truncated: true, depth: L }; }
       }
     }
     frontier = next; if (!frontier.length) break;
   }
-  return { items, levels, term, depth };
+  return { items, levels, term, termG, depth };
 }
 function drawIter(o, g, selected) {
   ctx.save();
