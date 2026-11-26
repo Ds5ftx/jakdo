@@ -73,7 +73,9 @@ function computeIter(o, Gx) {
   const chain = iterChain(o); const Gt = Object.assign({}, Gx);
   const valueIds = chain.filter(x => x.t === 'value' && !isFnObj(x)).map(x => x.id).concat(pre.filter(id => obj(id).t === 'value'));
   const items = [], levels = [Object.fromEntries(valueIds.map(id => [id, Gx[id] ? Gx[id].v : null]))];
-  const drawIds = chain.filter(x => (!x.hidden || o.d.drawHidden) && x.t !== 'value' && (o.d.ptsToo !== false || x.t !== 'point')).map(x => x.id);
+  const show = o.d.show; // GSP 에서 불러온 반복: 그려지는 객체가 정해져 있음
+  const drawIds = show ? chain.filter(x => show[x.id] && !show[x.id].hidden && x.t !== 'value').map(x => x.id) : chain.filter(x => (!x.hidden || o.d.drawHidden) && x.t !== 'value' && (o.d.ptsToo !== false || x.t !== 'point')).map(x => x.id);
+  const pcIds = new Set(drawIds.filter(id => obj(id).pc)); // 매개변수 색은 단계마다 그 단계의 값으로
   let frontier = [pre.map(id => Gx[id])]; let term = null; const CAP = o.d.cap || doc.prefs.iterCap || 30000;
   for (let L = 1; L <= depth; L++) {
     const next = [];
@@ -86,7 +88,7 @@ function computeIter(o, Gx) {
         const img = maps[m].map(id => Gt[id]); if (img.some(v => v == null)) continue;
         pre.forEach((id, i) => Gt[id] = img[i]);
         for (const c of chain) Gt[c.id] = compute(c, Gt);
-        if (!o.d.final || L === depth) for (const id of drawIds) if (Gt[id]) { items.push({ id, L, g: copyGeom(Gt[id]) }); }
+        if (!o.d.final || L === depth) for (const id of drawIds) if (Gt[id]) { const it = { id, L, g: copyGeom(Gt[id]) }; if (pcIds.has(id)) it.col = paramColor(obj(id), Gt); items.push(it); }
         if (m === 0 && next.length === 0) { levels[L] = Object.fromEntries(valueIds.map(id => [id, Gt[id] ? Gt[id].v : null])); term = img; }
         next.push(img);
         if (items.length > CAP) { return { items, levels, term, truncated: true, depth: L }; }
@@ -101,11 +103,11 @@ function drawIter(o, g, selected) {
   for (const it of g.items) { const s = obj(it.id); if (s && s.t === 'picture' && G[s.id]) drawPicture(s, { ...it.g, src: G[s.id].src }, false, false); }
   const passes = [it => isInterior(obj(it.id)), it => !isInterior(obj(it.id)) && obj(it.id).t !== 'point', it => obj(it.id).t === 'point'];
   for (const pass of passes) for (const it of g.items) {
-    const s = obj(it.id); if (!s || !pass(it) || s.t === 'picture') continue; const gg = it.g;
-    if (s.t === 'point') { const p = toS(gg); if (p.x < -10 || p.y < -10 || p.x > W + 10 || p.y > H + 10) continue; ctx.beginPath(); ctx.arc(p.x, p.y, [0, 2, 2.8, 4][s.ps || 2], 0, TAU); ctx.fillStyle = colOf(s); ctx.fill(); continue; }
+    const s = obj(it.id); if (!s || !pass(it) || s.t === 'picture') continue; const gg = it.g; const sc = o.d.show && o.d.show[it.id]; const cc = it.col || (sc && !s.pc ? col(sc.color) : colOf(s));
+    if (s.t === 'point') { const p = toS(gg); if (p.x < -10 || p.y < -10 || p.x > W + 10 || p.y > H + 10) continue; ctx.beginPath(); ctx.arc(p.x, p.y, [0, 2, 2.8, 4][s.ps || 2], 0, TAU); ctx.fillStyle = cc; ctx.fill(); continue; }
     ctx.beginPath(); if (s.t === 'locus') continue; pathGeom(s.t, gg);
-    if (isInterior(s)) { ctx.fillStyle = rgba(colOf(s), s.alpha ?? 0.26); ctx.fill('evenodd'); }
-    else { setStroke(s, 0, colOf(s)); ctx.stroke(); }
+    if (isInterior(s)) { ctx.fillStyle = rgba(cc, s.alpha ?? 0.26); ctx.fill('evenodd'); }
+    else { setStroke(s, 0, cc); ctx.stroke(); }
   }
   if (selected) { ctx.globalAlpha = 0.5; ctx.strokeStyle = THEME.sel; ctx.lineWidth = 1; ctx.setLineDash([3, 3]); let n = 0; for (const it of g.items) { if (n++ > 400) break; const s = obj(it.id); if (!s || s.t === 'point') continue; ctx.beginPath(); pathGeom(s.t, it.g); ctx.stroke(); } }
   ctx.restore();

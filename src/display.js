@@ -3,10 +3,10 @@
 function hex2(n) { return Math.round(clamp(n, 0, 255)).toString(16).padStart(2, '0'); }
 function hslHex(h, s, l) { s /= 100; l /= 100; const k = n => (n + h / 30) % 12, a = s * Math.min(l, 1 - l), f = n => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1)); return '#' + hex2(f(0) * 255) + hex2(f(8) * 255) + hex2(f(4) * 255); }
 function pcT(v, pc) { let t = (v - pc.min) / ((pc.max - pc.min) || 1); if (pc.mode === 'once') return clamp(t, 0, 1); if (pc.mode === 'bounce') { t = mod(t, 2); return t > 1 ? 2 - t : t; } return mod(t, 1); }
-function paramColor(o) {
-  const pc = o.pc; const vals = pc.v.map(id => { const g = G[id]; return g && isFinite(g.v) ? g.v : NaN; }); if (vals.some(v => !isFinite(v))) return null;
+function paramColor(o, Gx = G) {
+  const pc = o.pc; const vals = pc.v.map(id => { const g = Gx[id]; return g && isFinite(g.v) ? g.v : NaN; }); if (vals.some(v => !isFinite(v))) return null;
   if (vals.length === 3) return '#' + vals.map(v => hex2(pcT(v, pc) * 255)).join('');
-  const t = pcT(vals[0], pc); return pc.gray ? hslHex(0, 0, 88 - t * 80) : hslHex(270 * (1 - t), 78, 50);
+  const t = pcT(vals[0], pc); return pc.gray ? hslHex(0, 0, 88 - t * 80) : hslHex(270 * (1 - t), 78, 50); // GSP 스펙트럼과 같음 (보라 → 파랑 → 초록 → 노랑 → 빨강)
 }
 function paramColorDlg() {
   const s = S(); const vals = s.vals.filter(v => !isFnObj(v)); const targets = s.os.filter(o => !vals.includes(o));

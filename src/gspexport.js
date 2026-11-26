@@ -147,6 +147,7 @@ GSPX.toolDoc = (t, base) => {
 };
 GSPX.setPref = (u8, tag, val, at = 0) => { const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength); let off = 0; while (off + 8 <= u8.length) { const len = dv.getUint32(off, true), t = dv.getUint32(off + 4, true); if (t === tag && len >= at + 2) { dv.setUint16(off + 8 + at, val, true); return; } off += 8 + len; } };
 
+GSPX.setPal = (u8, idx, c) => { const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength), rgb = GSPX.rgb(c); let off = 0; while (off + 8 <= u8.length) { const len = dv.getUint32(off, true), t = dv.getUint32(off + 4, true); if (t === 10020 && len >= 5 && dv.getUint16(off + 8, true) === idx) { rgb.forEach((v, k) => { u8[off + 10 + k] = v; }); return; } off += 8 + len + (len & 1); } };
 GSPX.picBytes = (src, w, h) => { // 그림을 PNG 바이트로 (PNG가 아니면 캔버스로 다시 그려 변환)
   try {
     let url = src;
@@ -234,6 +235,7 @@ function buildGSP() {
               else if ((sA && cB) || (cA && sB)) { const L = sA ? A : B; if (L.k === 'perp' && GSPI.opt.perp) i = 1 - i; code = i ? 12 : 11; }
               else if (cA && cB) { if (GSPI.opt.cc) i = 1 - i; code = i ? 14 : 13; }
               if (code == null && (A.t === 'polygon' || B.t === 'polygon') && (sA || sB) && !(o.d.i > 0)) id = emit(93, 1, 45, sA ? [P1(A.id), P1(B.id)] : [P1(B.id), P1(A.id)], o, lab(o, []), { e: 0x221 }); // 직선류와 다각형 둘레의 교점
+              else if (code == null && (A.t === 'locus' || B.t === 'locus') && (sA || sB)) id = emit(98, 1, 45, sA ? [P1(A.id), P1(B.id)] : [P1(B.id), P1(A.id)], o, lab(o, [[2003, new GSPX.B().u32(98).u32(o.d.i || 0).get()]]), { e: 0x221 }); // 직선류와 자취의 교점
               else { if (code == null) throw 0; id = emit(code, 1, 45, par, o, lab(o, []), { e: 0x221 }); }
             } else if (pk === 'onv' && A && B) { id = emit(95, 1, 56, [P1(B.id), P1(A.id)], o, lab(o, []), { e: 0x221 }); // 값으로 정한 경로 위의 점
             } else if (pk === 'cxf') { id = emit(101, 1, 89, GSPX.cxfPar(o, P1), o, lab(o, []), { e: 0x221 }); // 사용자 변환의 상
@@ -265,7 +267,15 @@ function buildGSP() {
             const src = obj(o.p[0]); const x = o.d.xf || o.d; const k = o.t === 'polygon' ? GSPX.polyK(src.p.length) : kOf(o); if (!k) throw 0;
             const c = cOf(o), e = o.t === 'point' ? { e: 0x221, interior: isInterior(o) } : { interior: isInterior(o) };
             const iS = P1(src.id); let rs = [];
-            if (x.type === 'rot' && x.c && x.ang != null && !x.angV) { const a = x.ang * D2R; id = emit(27, c, k, [iS, P1(x.c)], o, lab(o, [[2003, new GSPX.B().u32(27).f64(-Math.sin(a)).f64(Math.cos(a)).f64(x.ang).u32(1).u32(0).get()]]), e); }
+            const idt = x.type === 'tr' && x.mode === 'rect' && !x.dx && !x.dy && !x.dxV && !x.dyV;
+            if (idt && o.pc && o.pc.v && o.pc.v.length) { // 매개변수 색 (원본과 같은 모양): GSP 75, 값 3개는 B·G·R 순서
+              const vs = o.pc.v.length === 3 ? o.pc.v.slice().reverse() : o.pc.v; const sub = (o.pc.v.length === 3 ? 0x30 : o.pc.gray ? 0x20 : 0x10) | (o.pc.mode === 'bounce' ? 2 : 1);
+              id = emit(75, c, k, [iS, ...vs.map(P1)], o, lab(o, [[2003, new GSPX.B().u32(75).u32(sub).f64(o.pc.min || 0).f64(o.pc.max ?? 1).get()]]), e);
+            }
+            else if (x.type === 'rot' && x.c && x.angV) id = emit(29, c, k, [iS, P1(x.c), P1(x.angV)], o, lab(o, []), e); // 측정한 각만큼 회전
+            else if (x.type === 'dil' && x.c && x.rS) id = emit(31, c, k, [iS, P1(x.c), P1(x.rS[0]), P1(x.rS[1])], o, lab(o, []), e); // 두 선분의 비로 확대
+            else if (x.type === 'tr' && x.distV && !x.angV && !x.angP) { const a = (x.ang || 0) * D2R; id = emit(24, c, k, [iS, P1(x.distV)], o, lab(o, [[2003, new GSPX.B().u32(24).f64(-Math.sin(a)).f64(Math.cos(a)).f64(x.ang || 0).u32(1).get()]]), e); } // 측정한 거리, 정한 각
+            else if (x.type === 'rot' && x.c && x.ang != null && !x.angV) { const a = x.ang * D2R; id = emit(27, c, k, [iS, P1(x.c)], o, lab(o, [[2003, new GSPX.B().u32(27).f64(-Math.sin(a)).f64(Math.cos(a)).f64(x.ang).u32(1).u32(0).get()]]), e); }
             else if (x.type === 'rot' && x.c && x.angP) id = emit(28, c, k, [iS, P1(x.c), ...x.angP.map(P1)], o, lab(o, []), e);
             else if (x.type === 'dil' && x.c && x.rP) id = emit(32, c, k, [iS, P1(x.c), ...x.rP.map(P1)], o, lab(o, []), e);
             else if (x.type === 'dil' && x.c && x.rV) id = emit(33, c, k, [iS, P1(x.c), P1(x.rV)], o, lab(o, []), e);
@@ -283,10 +293,13 @@ function buildGSP() {
             if (code == null) throw 0; id = emit(code, 2, kOf(o), par, o, lab(o, []));
           } else if (id == null && o.t === 'circle') {
             if (o.k === 'cp') id = emit(3, 3, 28, par, o, lab(o, []));
-            else if (o.k === 'cr' && obj(o.p[1]) && obj(o.p[1]).t === 'segment') id = emit(4, 3, 28, par, o, lab(o, []));
+            else if (o.k === 'cr' && obj(o.p[1]) && (obj(o.p[1]).t === 'segment' || (obj(o.p[1]).t === 'value' && obj(o.p[1]).k !== 'fdef'))) id = emit(4, 3, 28, par, o, lab(o, [])); // 중심과 반지름(선분 또는 거리 값)
             else throw 0;
           } else if (id == null && o.t === 'arc' && o.k === '3p') id = emit(81, 12, 67, par, o, lab(o, []));
           else if (id == null && o.t === 'arc' && o.k === 'cpp') id = emit(80, 12, 67, par, o, lab(o, []));
+          else if (id == null && o.t === 'arc' && o.k === 'oc') id = emit(79, 12, 67, par, o, lab(o, [])); // 원 위의 호
+          else if (id == null && (o.t === 'sector' || o.t === 'arcseg') && o.k === 'a') id = emit(o.t === 'sector' ? 82 : 83, 13, o.t === 'sector' ? 68 : 69, par, o, lab(o, []), { interior: true }); // 부채꼴·활꼴 내부
+          else if (id == null && o.t === 'amark') id = emit(112 + Math.min(3, Math.max(1, o.d.n || 1)), 18, 95, par, o, [[2318, new GSPX.B().hex('0100000000000000fefefe00').get()]], { e: 0x221 }); // 각 표시
           else if (id == null && o.t === 'polygon' && o.k === 'pts') id = emit(8, 4, GSPX.polyK(o.p.length), par, o, lab(o, []), { interior: true });
           else if (id == null && o.t === 'cinterior') id = emit(10, 5, 16, par, o, lab(o, []), { interior: true });
           else if (id == null && o.t === 'locus' && o.k === 'cxf') { // 사용자 변환으로 옮긴 경로
@@ -325,6 +338,12 @@ function buildGSP() {
             const [x0, y0] = PX(g.TL.x, g.TL.y), [x1, y1] = PX(g.TR.x, g.TR.y), [x2, y2] = PX(g.BL.x, g.BL.y);
             const k = pics.length; pics.push(new GSPX.B().u32(pb.w).u32(pb.h).bytes(pb.bytes).get());
             const hdr = { color: '#ff0000', hidden: o.hidden };
+            const pins = o.k === 'pts' && (o.p.length === 1 ? o.d.center : o.p.length === 2 || (o.p.length === 3 && o.d.gsp3)) && !o.p.some(q => obj(q) && obj(q).d && obj(q).d.pich) && o.p.every(q => P1(q)) ? o.p : null;
+            if (pins) { // 점에 붙인 그림: 1점(가운데) 99, 2점(마주 보는 꼭짓점) 85, 3점(세 꼭짓점) 100
+              const code = pins.length === 1 ? 99 : pins.length === 2 ? 85 : 100, rs = [[2316, new GSPX.B().u32(pb.w).u32(pb.h).u32(pb.w).u32(pb.h).get()], [8004, new GSPX.B().u16(k).get()]];
+              if (code === 99) rs.unshift([2003, new GSPX.B().u32(99).f64((o.d.ww || pb.w / PXCM) * PXCM / pb.w).f64((o.d.ww || pb.w / PXCM) * PXCM / pb.w).f64(0).get()]);
+              id = emit(code, 16, 78, pins.map(P1), hdr, rs, { e: 0x121, pic: true });
+            } else
             id = emit(0, 16, 78, [], hdr, [[2316, new GSPX.B().u32(pb.w).u32(pb.h).u32(pb.w).u32(pb.h).get()], [2216, new GSPX.B().f64((x1 - x0) / pb.w).f64((x2 - x0) / pb.h).f64(x0).f64((y1 - y0) / pb.w).f64((y2 - y0) / pb.h).f64(y0).get()], [8004, new GSPX.B().u16(k).get()]], { e: 0x121, pic: true });
           } else if (id == null && o.t === 'text') {
             const txt = String(o.d.text || '').replace(/\{#\d+\}/g, '');
@@ -365,12 +384,15 @@ function buildGSP() {
             const pre = o.d.pre || [], maps = o.d.maps || []; const chain = iterChain(o).filter(c => P1(c.id) > 0);
             const dv = o.d.depthV != null ? P1(o.d.depthV) : null; if (o.d.depthV != null && !(dv > 0)) throw 0;
             const p = [...(dv ? [dv] : []), ...pre.map(P1), ...maps.flat().map(P1), ...chain.map(c => P1(c.id))];
-            const r = new GSPX.B().u32(0).u16(0).u16(pre.length).u32(maps.length).u32((Math.random() * 0x7fffffff) >>> 0).u32(Math.max(0, o.d.depth ?? 3)).u32(0).get();
+            const r = new GSPX.B().u32(0).u16(o.d.final ? 1 : 0).u16(pre.length).u32(maps.length).u32((Math.random() * 0x7fffffff) >>> 0).u32(Math.max(0, o.d.depth ?? 3)).u32(0).get();
             id = emit(dv ? 89 : 76, 14, 64, p, o, [[2314, r]]);
             idx.set(o.id, id);
             for (const c of chain) { // 반복된 상 (그려지는 객체마다 하나)
-              if (c.t === 'value' || isScreenObj(c) || c.t === 'locus' || (c.hidden && !o.d.drawHidden) || (c.t === 'point' && o.d.ptsToo === false)) continue;
-              emit(77, 15, 65, [P1(c.id), id], c, [], c.t === 'point' ? { e: 0x221 } : {});
+              if (c.t === 'value' || isScreenObj(c) || c.t === 'locus') continue;
+              const sh = o.d.show && o.d.show[c.id];
+              if (o.d.show ? !sh : ((c.hidden && !o.d.drawHidden) || (c.t === 'point' && o.d.ptsToo === false))) continue;
+              const cc = sh ? { ...c, color: sh.color, hidden: sh.hidden } : c;
+              emit(77, 15, 65, [P1(c.id), id], cc, [], c.t === 'point' ? { e: 0x221 } : {});
             }
           } else if (id == null && o.t === 'table' && o.k === 'iter') {
             const p = [P1(o.p[0]), ...o.p.slice(1).map(P1).filter(v => v > 0)];
@@ -405,8 +427,8 @@ function buildGSP() {
       // 페이지 머리글
       const p902 = GSPX.b64(GSPX_T.p902), p1000 = GSPX.b64(GSPX_T.p1000); new DataView(p1000.buffer).setUint32(8 + 24, recs.length, true); new DataView(p1000.buffer).setUint16(8 + 16, GSPX.unit(doc), true); new DataView(p1000.buffer).setUint16(8 + 8, 0x4000 + pi * 0x0731 + 17, true); // @16 각 단위(0 라디안, 1 도), @8 페이지마다 다른 값
       W.raw(p902); W.raw(p1000);
-      const nm = GSPX.utf8(pg.name || ('페이지 ' + (pi + 1))); W.rec(1100, new GSPX.B().bytes(nm).u8(0).get());
-      const prest = GSPX.b64(GSPX_T.prest); GSPX.setPref(prest, 10042, GSPX.unit(doc)); W.raw(GSPX.swapTables(prest, GSPX.styleTables(recs)));
+      if (!(pg.autoName && pg.name === '페이지 ' + (pi + 1))) { const nm = GSPX.utf8(pg.name || ('페이지 ' + (pi + 1))); W.rec(1100, new GSPX.B().bytes(nm).u8(0).get()); } // 이름 없는 GSP 페이지는 이름을 쓰지 않음 (GSP 가 번호로 표시)
+      const prest = GSPX.b64(GSPX_T.prest); GSPX.setPref(prest, 10042, GSPX.unit(doc)); if (doc.prefs.bg) { GSPX.setPal(prest, 7, doc.prefs.bg); GSPX.setPref(prest, 10021, 8); } W.raw(GSPX.swapTables(prest, GSPX.styleTables(recs))); // 배경색: 색 표 7번 + 10021 = 8
       for (const r of recs) { W.rec(2000, r.h); for (const [t, u] of r.rs) W.rec(t, u); W.rec(2007, new Uint8Array(0)); }
       if (csFirst) W.rec(9005, new GSPX.B().u32(csFirst).get());
       W.rec(1001, new Uint8Array(0)); W.rec(903, new Uint8Array(0));

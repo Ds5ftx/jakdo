@@ -75,6 +75,8 @@ GSPI.parse = (ab) => {
     if (tag === 902) { sec = { type: dv.getUint16(p, true), name: '', objs: [] }; secs.push(sec); }
     else if (tag === 1300 && len > 8) pics.push(GSPI.picture(u8, p, len));
     else if (tag === 1204 && sec && len >= 4) { const n = dv.getUint32(p, true); sec.givens = []; for (let i = 0; i < n && 8 + 4 * i <= len; i++) sec.givens.push(dv.getUint32(p + 4 + 4 * i, true) - 1); }
+    else if (tag === 10020 && sec && len >= 5) (sec.pal = sec.pal || {})[dv.getUint16(p, true)] = '#' + [2, 3, 4].map(k => u8[p + k].toString(16).padStart(2, '0')).join(''); // 페이지 색 표
+    else if (tag === 10021 && sec && len >= 2) sec.bgi = dv.getUint16(p, true); // 0 이 아니면 색 표 7번이 배경색
     else if (tag === 1201 && sec && len >= 3) { let e = p + 2; while (e < p + len && u8[e]) e++; (sec.fonts = sec.fonts || []).push(GSPI.dec(u8.slice(p + 2, e))); } // 글꼴 표
     else if (tag === 1203 && sec && len >= 20) (sec.styles = sec.styles || []).push({ f: dv.getUint16(p, true), pt: dv.getUint16(p + 2, true), it: u8[p + 15] === 1, raw: Array.from(u8.slice(p + 4, p + 20)) }); // 글자 모양 표: 글꼴 번호, 크기(pt), 꼴
     else if (tag === 1100 && sec) { let e = p; while (e < p + len && u8[e]) e++; sec.name = GSPI.dec(u8.slice(p, e)); }
@@ -141,10 +143,19 @@ GSPI.build = (F, sec, links) => {
   sec.objs.forEach((s, i) => {
     let P = s.par.map(j => map[j]); let id = null;
     if (s.k === 23 || s.k === 59 || s.k === 19) P = P.filter(v => v != null && v !== -1);
-    if (s.code === 77) { map[i] = null; return; } // 반복된 상: 반복 객체가 그린다
+    if (s.code === 77) { // 반복된 상: [원본, 반복] — GSP 가 실제로 그리는 객체와 그 색·숨김
+      const it = P[1] != null && obj(P[1]); if (it && it.t === 'iter' && P[0] != null) { (it.d.show = it.d.show || {})[P[0]] = { color: GSPI.color(...s.rgb), hidden: !!(s.fl & 1) }; }
+      map[i] = null; return;
+    }
     if (s.code !== 76 && s.code !== 89 && P.some(v => v == null)) { map[i] = null; skipped++; (GSPI.miss = GSPI.miss || []).push('dep:' + s.code + '/' + s.k + '@' + sec.type); return; }
     const po = j => obj(P[j]);
     try {
+      if (s.k === 78 && s.rec[8004] && !s.rec[2216] && (s.code === 99 || s.code === 85 || s.code === 100)) { // 점에 붙인 그림: 1점(가운데), 2점(마주 보는 꼭짓점), 3점(세 꼭짓점)
+        const pic = F.pics[dv.getUint16(s.rec[8004].p, true)]; if (!pic || !pic.src) { map[i] = null; skipped++; return; }
+        const r = s.rec[2003], sx = r && r.len >= 20 ? D(r, 4) : 1;
+        const o = add({ t: 'picture', k: 'pts', p: s.code === 99 ? [P[0]] : s.code === 85 ? [P[0], P[1]] : [P[0], P[1], P[2]], d: { src: pic.src, w: pic.w, h: pic.h, ww: pic.w * (sx || 1) / PXCM, center: s.code === 99, gsp3: s.code === 100 }, color: 'ink' });
+        o.hidden = !!(s.fl & 1); map[i] = o.id; return;
+      }
       switch (s.k === 23 ? 62 : (s.rec[2216] && s.rec[8004]) ? 0 : s.code) {
         case 0: {
           if (s.rec[2216] && s.rec[8004]) { // 그림
@@ -169,7 +180,7 @@ GSPI.build = (F, sec, links) => {
           const Q = P.slice(); const depthV = s.code === 89 ? Q.shift() : null; if (s.code === 89 && depthV == null) break;
           const pre = Q.slice(0, npre), maps = []; for (let m = 0; m < nm; m++) maps.push(Q.slice(npre * (m + 1), npre * (m + 2)));
           if (pre.length !== npre || pre.some(v => v == null) || maps.some(m => m.length !== npre || m.some(v => v == null))) break;
-          id = add({ t: 'iter', k: 'geo', p: [...pre, ...maps.flat(), ...(depthV != null ? [depthV] : [])], d: { pre, maps, depth: Math.min(400, depth || 3), depthV, final: false } }).id; break;
+          id = add({ t: 'iter', k: 'geo', p: [...pre, ...maps.flat(), ...(depthV != null ? [depthV] : [])], d: { pre, maps, depth: Math.min(400, depth || 3), depthV, final: !!(r && dv.getUint16(r.p + 4, true) === 1) } }).id; break; // 2314 @4 = 1: 마지막 단계만 표시
         }
         case 92: { if (P[0] == null || obj(P[0]).t !== 'iter') break; const r = s.rec[2317]; const sx = r ? dv.getInt16(r.p + 12, true) : 10, sy = r ? dv.getInt16(r.p + 14, true) : 10; id = add({ t: 'table', k: 'iter', p: P.filter(v => v != null), d: { sx, sy } }).id; map[i] = id; return; }
         case 1: id = mkMid(P[0]); break;
@@ -199,6 +210,22 @@ GSPI.build = (F, sec, links) => {
         }
         case 80: id = mkArcCPP(P[0], P[1], P[2]); break; // 첫 점에서 둘째 점까지 반시계 방향 (GSP 와 같음) // 중심과 두 점으로 정한 호
         case 81: id = mkArc3(P[0], P[1], P[2]); break; // 세 점을 지나는 호
+        case 75: { // 매개변수 색: 원본과 같은 모양을 값(1개: 스펙트럼·회색조, 3개: RGB)에 따라 칠함
+          const r = s.rec[2003], sub = r && r.len >= 8 ? dv.getUint32(r.p + 4, true) : 0x12;
+          id = mkXf(P[0], { type: 'tr', mode: 'rect', dx: 0, dy: 0 }); const o = obj(id); o.label = obj(P[0]).label;
+          { const src = sec.objs[s.par[0]]; if (src && (src.fl & 4)) obj(P[0]).hidden = true; } // 원본에 4 가 서 있으면 색을 입힌 사본이 대신 보임
+          o.pc = { v: P.length === 4 ? P.slice(1).reverse() : P.slice(1), min: r && r.len >= 24 ? D(r, 8) : 0, max: r && r.len >= 24 ? D(r, 16) : 1, mode: (sub & 15) === 2 ? 'bounce' : 'cycle', gray: (sub >> 4) === 2 };
+          break;
+        }
+        case 79: id = mkArcOC(P[0], P[1], P[2]); break; // 원 위의 호: [원, 시작점, 끝점]
+        case 82: id = mkSector(P[0]); break; // 부채꼴 내부
+        case 83: id = mkArcSeg(P[0]); break; // 활꼴 내부
+        case 98: { const r = s.rec[2003]; id = mkInt(P[0], P[1], r && r.len >= 8 ? dv.getUint32(r.p + 4, true) : 0); break; } // 직선류와 자취의 교점
+        case 113: case 114: case 115: id = add({ t: 'amark', k: 'm', p: [P[0], P[1], P[2]], d: { n: s.code - 112 } }).id; break; // 각 표시 (호 1·2·3겹)
+        case 24: { const r = s.rec[2003]; id = mkXf(P[0], { type: 'tr', distV: P[1], ang: D(r, 20) }); break; } // 측정한 거리만큼, 정한 각도로 평행이동
+        case 29: id = mkXf(P[0], { type: 'rot', c: P[1], angV: P[2] }); break; // 측정한 각만큼 회전
+        case 31: id = mkXf(P[0], { type: 'dil', c: P[1], rS: [P[2], P[3]] }); break; // 두 선분의 비로 확대
+        case 108: id = add({ t: 'picture', k: 'xf', p: [P[0]], d: { xf: { type: 'tr', mode: 'rect', dx: 0, dy: 0 }, crop: P[1] }, color: 'ink' }).id; break; // 다각형으로 잘라 낸 그림
         case 35: id = mkLocus(P[2], P[0]); break;
         case 97: { // 매개변수로 움직이는 자취: [자취를 그릴 객체, 매개변수, 연쇄…]
           const prm = po(1); if (!prm || prm.t !== 'value') break; const r = s.rec[2306]; id = mkLocus(P[1], P[0]);
@@ -343,10 +370,10 @@ async function importGSPFile(file) {
   try {
     for (const sec of F.secs) {
       if (sec.type !== 1 && sec.type !== 2) continue;
-      doc = newDoc(); doc.prefs.autoLabel = false; reindex(); sel = []; if (sec.angle === 0) doc.prefs.deg = false; else if (sec.angle >= 1) { doc.prefs.deg = true; doc.prefs.directed = sec.angle === 2; } // 2: 방향 있는 도
+      doc = newDoc(); doc.prefs.autoLabel = false; reindex(); sel = []; if (sec.bgi > 0 && sec.pal && sec.pal[7] && sec.pal[7] !== '#ffffff') doc.prefs.bg = sec.pal[7]; /* 배경색은 색 표 7번 (10021 이 0 이 아닐 때) */ if (sec.angle === 0) doc.prefs.deg = false; else if (sec.angle >= 1) { doc.prefs.deg = true; doc.prefs.directed = sec.angle === 2; } // 2: 방향 있는 도
       const L = []; skipped += GSPI.build(F, sec, L); GSPI.fixInts(); if (sec.scroll) doc.objs.forEach(o => { if (o.d && o.d.sx != null) { o.d.sx -= sec.scroll.x; o.d.sy -= sec.scroll.y; } }); // 글·값·버튼 위치는 화면 기준
       doc.prefs.autoLabel = true;
-      if (sec.type === 1) { pages.push({ name: sec.name || '페이지 ' + (pages.length + 1), doc, view: { ox: -(sec.scroll ? sec.scroll.x : 0), oy: -(sec.scroll ? sec.scroll.y : 0), s: PXCM } }); links.push(L); }
+      if (sec.type === 1) { pages.push({ name: sec.name || '페이지 ' + (pages.length + 1), autoName: !sec.name, doc, view: { ox: -(sec.scroll ? sec.scroll.x : 0), oy: -(sec.scroll ? sec.scroll.y : 0), s: PXCM } }); links.push(L); }
       else if (doc.objs.length) {
         recompute(); const csPart = o => (o.t === 'coord' && o.given) || ((o.isOrigin || o.k === 'unit') && doc.objs.some(c => c.t === 'coord' && c.given && c.p.includes(o.id))); sel = doc.objs.filter(o => !['text', 'button'].includes(o.t) && !csPart(o)).map(o => o.id); // 주어진 좌표계의 부분만 뺀다 (도구가 직접 만드는 좌표계는 도구 객체)
         const t = buildTool(sec.name || '도구 ' + (tools.length + 1));

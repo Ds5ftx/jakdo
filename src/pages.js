@@ -110,13 +110,13 @@ function parseBook(data) {
 }
 function replaceBook(b) {
   book = { pages: [], cur: 0, nextPid: 1 };
-  for (const p of b.pages) book.pages.push({ id: book.nextPid++, name: p.name, doc: p.doc, view: p.view && p.view.s ? p.view : defaultView() });
+  for (const p of b.pages) book.pages.push({ id: book.nextPid++, name: p.name, autoName: p.autoName, doc: p.doc, view: p.view && p.view.s ? p.view : defaultView() });
   if (!book.pages.length) book.pages.push({ id: book.nextPid++, name: '페이지 1', doc: newDoc(), view: defaultView() });
   showPage(clamp(b.cur || 0, 0, book.pages.length - 1), { noStash: true });
 }
 function appendBook(b) {
   stashPage(); const first = book.pages.length;
-  for (const p of b.pages) book.pages.push({ id: book.nextPid++, name: pageName(p.name), doc: p.doc, view: p.view && p.view.s ? p.view : defaultView() });
+  for (const p of b.pages) book.pages.push({ id: book.nextPid++, name: pageName(p.name), autoName: p.autoName, doc: p.doc, view: p.view && p.view.s ? p.view : defaultView() });
   showPage(first, { noStash: true });
   return b.pages.length;
 }

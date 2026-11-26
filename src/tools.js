@@ -200,9 +200,9 @@ function pictureFrame(o, Gx) {
   if (o.k === 'xf') { const g = Gx[o.p[0]], M = buildMap(d.xf, Gx); if (!g || !M) return null; return { TL: M.f(g.TL), TR: M.f(g.TR), BL: M.f(g.BL), src: g.src }; }
   const aspect = d.h / d.w; let TL, TR, BL;
   if (o.p.length === 0 || o.k === 'free') { TL = { x: d.x, y: d.y }; TR = { x: d.x + d.ww, y: d.y }; BL = { x: d.x, y: d.y - d.ww * aspect }; }
-  else if (o.p.length === 1) { const P0 = Gx[o.p[0]]; if (!P0) return null; TL = P0; TR = { x: P0.x + d.ww, y: P0.y }; BL = { x: P0.x, y: P0.y - d.ww * aspect }; }
+  else if (o.p.length === 1) { const P0 = Gx[o.p[0]]; if (!P0) return null; const hw = d.center ? d.ww / 2 : 0, hh = d.center ? d.ww * aspect / 2 : 0; TL = { x: P0.x - hw, y: P0.y + hh }; TR = { x: TL.x + d.ww, y: TL.y }; BL = { x: TL.x, y: TL.y - d.ww * aspect }; } // center: 점이 그림의 가운데 (GSP 「그림을 점에 합치기」)
   else if (o.p.length === 2) { const P0 = Gx[o.p[0]], Q = Gx[o.p[1]]; if (!P0 || !Q) return null; TL = P0; TR = { x: Q.x, y: P0.y }; BL = { x: P0.x, y: Q.y }; }
-  else { const P0 = Gx[o.p[0]], Q = Gx[o.p[1]], R = Gx[o.p[2]]; if (!P0 || !Q || !R) return null; TL = P0; TR = Q; BL = R; }
+  else { const P0 = Gx[o.p[0]], Q = Gx[o.p[1]], R = Gx[o.p[2]]; if (!P0 || !Q || !R) return null; if (d.gsp3) { TL = P0; BL = R; TR = vadd(Q, vsub(P0, R)); } else { TL = P0; TR = Q; BL = R; } } // gsp3: GSP 의 세 점 = 왼쪽 위, 오른쪽 아래, 왼쪽 아래
   return { TL, TR, BL, src: d.src };
 }
 function drawPicture(o, g, selected, hover) {
