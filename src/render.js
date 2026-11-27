@@ -276,6 +276,10 @@ function drawAngleMark(o, g, hi) {
   o._arc = { V, R: o.d.r || 20, a0: aA, sw: sweep };
   ctx.restore();
 }
+// 값 표시를 GSP 처럼: 이름(= 왼쪽)의 로마자는 기울이고 sin·log 같은 함수 이름과 수는 바로, x[A] 는 아래 첨자. 함수는 식(오른쪽)도 같은 규칙
+const VAL_UPRIGHT = new Set(['sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'arcsin', 'arccos', 'arctan', 'sec', 'csc', 'cot', 'log', 'ln', 'exp', 'sqrt', 'abs', 'sgn', 'round', 'trunc', 'mod', 'max', 'min', 'cm', 'in', 'pi', 'e']);
+function valueItal(s) { if (/\\|[\^_]\{/.test(s)) return s; return s.replace(/([A-Za-z]+)(\[([^\]]+)\])?/g, (m, w, br, sub) => (VAL_UPRIGHT.has(w) ? w : '\\it{' + w + '}') + (sub ? '_{\\it{' + sub + '}}' : '')); }
+function valueRich(o, txt) { const i = txt.indexOf(' = '); if (i < 0) return isFnObj(o) ? valueItal(txt) : txt; const a = txt.slice(0, i), b = txt.slice(i); return valueItal(a) + (isFnObj(o) ? valueItal(b) : b); }
 function drawScreenObj(o, selected, hover) {
   ctx.save(); if (o.hidden) ctx.globalAlpha = 0.35;
   if (o.t === 'value') {
@@ -284,7 +288,9 @@ function drawScreenObj(o, selected, hover) {
     if (isParam) { roundRect(b.x, b.y, b.w, b.h, 4); ctx.fillStyle = THEME.chip; ctx.fill(); ctx.strokeStyle = THEME.chipLine; ctx.lineWidth = 1; ctx.stroke(); }
     if (selected || hover) { roundRect(b.x - 2, b.y - 2, b.w + 4, b.h + 4, 4); ctx.strokeStyle = selected ? THEME.sel : THEME.hover; ctx.lineWidth = selected ? 2 : 1.2; ctx.setLineDash(selected ? [] : [3, 3]); ctx.stroke(); ctx.setLineDash([]); }
     if (!isParam) { ctx.globalAlpha *= 0.82; ctx.fillStyle = THEME.paper; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.globalAlpha = o.hidden ? 0.35 : 1; }
-    ctx.fillStyle = colOf(o); ctx.textBaseline = 'top'; ctx.font = vf; ctx.fillText(txt, b.x + b.pad, b.y + b.pad + 1);
+    ctx.fillStyle = colOf(o);
+    if (o.d.gsty) { const L = layoutRich(parseRich(valueRich(o, txt)), vsz, vf.replace(/\d+(\.\d+)?px/, '{S}')); ctx.textBaseline = 'alphabetic'; L.draw(b.x + b.pad, b.y + b.pad + 1 + vsz * 0.8); } // GSP 에서 온 값: 이름은 기울여, 값은 바로
+    else { ctx.textBaseline = 'top'; ctx.font = vf; ctx.fillText(txt, b.x + b.pad, b.y + b.pad + 1); }
   } else if (o.t === 'text') { ctx.restore(); drawRichText(o, selected, hover); return;
   } else if (o.t === 'text_old') {
     const lines = (o.d.text || '').split('\n'); const fs = o.d.size || 15;

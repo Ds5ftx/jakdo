@@ -1167,6 +1167,10 @@ function drawAngleMark(o, g, hi) {
   o._arc = { V, R: o.d.r || 20, a0: aA, sw: sweep };
   ctx.restore();
 }
+// 값 표시를 GSP 처럼: 이름(= 왼쪽)의 로마자는 기울이고 sin·log 같은 함수 이름과 수는 바로, x[A] 는 아래 첨자. 함수는 식(오른쪽)도 같은 규칙
+const VAL_UPRIGHT = new Set(['sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'arcsin', 'arccos', 'arctan', 'sec', 'csc', 'cot', 'log', 'ln', 'exp', 'sqrt', 'abs', 'sgn', 'round', 'trunc', 'mod', 'max', 'min', 'cm', 'in', 'pi', 'e']);
+function valueItal(s) { if (/\\|[\^_]\{/.test(s)) return s; return s.replace(/([A-Za-z]+)(\[([^\]]+)\])?/g, (m, w, br, sub) => (VAL_UPRIGHT.has(w) ? w : '\\it{' + w + '}') + (sub ? '_{\\it{' + sub + '}}' : '')); }
+function valueRich(o, txt) { const i = txt.indexOf(' = '); if (i < 0) return isFnObj(o) ? valueItal(txt) : txt; const a = txt.slice(0, i), b = txt.slice(i); return valueItal(a) + (isFnObj(o) ? valueItal(b) : b); }
 function drawScreenObj(o, selected, hover) {
   ctx.save(); if (o.hidden) ctx.globalAlpha = 0.35;
   if (o.t === 'value') {
@@ -1175,7 +1179,9 @@ function drawScreenObj(o, selected, hover) {
     if (isParam) { roundRect(b.x, b.y, b.w, b.h, 4); ctx.fillStyle = THEME.chip; ctx.fill(); ctx.strokeStyle = THEME.chipLine; ctx.lineWidth = 1; ctx.stroke(); }
     if (selected || hover) { roundRect(b.x - 2, b.y - 2, b.w + 4, b.h + 4, 4); ctx.strokeStyle = selected ? THEME.sel : THEME.hover; ctx.lineWidth = selected ? 2 : 1.2; ctx.setLineDash(selected ? [] : [3, 3]); ctx.stroke(); ctx.setLineDash([]); }
     if (!isParam) { ctx.globalAlpha *= 0.82; ctx.fillStyle = THEME.paper; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.globalAlpha = o.hidden ? 0.35 : 1; }
-    ctx.fillStyle = colOf(o); ctx.textBaseline = 'top'; ctx.font = vf; ctx.fillText(txt, b.x + b.pad, b.y + b.pad + 1);
+    ctx.fillStyle = colOf(o);
+    if (o.d.gsty) { const L = layoutRich(parseRich(valueRich(o, txt)), vsz, vf.replace(/\d+(\.\d+)?px/, '{S}')); ctx.textBaseline = 'alphabetic'; L.draw(b.x + b.pad, b.y + b.pad + 1 + vsz * 0.8); } // GSP 에서 온 값: 이름은 기울여, 값은 바로
+    else { ctx.textBaseline = 'top'; ctx.font = vf; ctx.fillText(txt, b.x + b.pad, b.y + b.pad + 1); }
   } else if (o.t === 'text') { ctx.restore(); drawRichText(o, selected, hover); return;
   } else if (o.t === 'text_old') {
     const lines = (o.d.text || '').split('\n'); const fs = o.d.size || 15;
@@ -3411,6 +3417,8 @@ function parseRich(s) {
   while (i < s.length) {
     const c = s[i];
     if (c === '^' || c === '_') { i++; out.push({ k: c === '^' ? 'sup' : 'sub', c: group() }); continue; }
+    if (s.startsWith('\\color{', i)) { const j = s.indexOf('}', i + 7); if (j > 0) { const v = s.slice(i + 7, j); i = j + 1; out.push({ k: 'color', v, c: group() }); continue; } } // \color{#ff8000}{글자}: 일부만 다른 색
+    if (s.startsWith('\\it{', i)) { i += 3; out.push({ k: 'it', c: group() }); continue; } // \it{글자}: 기울임
     if (s.startsWith('\\overline', i)) { i += 9; out.push({ k: 'over', c: group() }); continue; }
     if (s.startsWith('\\arc', i)) { i += 4; out.push({ k: 'arcm', c: group() }); continue; }
     if (s.startsWith('\\frac', i)) { i += 5; const a = group(), b = group(); out.push({ k: 'frac', a, b }); continue; }
@@ -3433,6 +3441,8 @@ function layoutRich(nodes, size, font) {
     else if (n.k === 'sup' || n.k === 'sub') { const c = layoutRich(n.c, size * 0.7, font); const dy = n.k === 'sup' ? -size * 0.4 : size * 0.25; L = { w: c.w + 1, asc: Math.max(size * 0.8, c.asc - dy), desc: Math.max(size * 0.25, c.desc + dy), draw: (x, y) => c.draw(x, y + dy) }; }
     else if (n.k === 'over' || n.k === 'arcm') { const c = layoutRich(n.c, size, font); const arc = n.k === 'arcm'; L = { w: c.w, asc: c.asc + 4, desc: c.desc, draw: (x, y) => { c.draw(x, y); const top = y - c.asc - 2; if (arc) { ctx.save(); ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 1.1; ctx.beginPath(); ctx.ellipse(x + c.w / 2, top + 2, c.w / 2, 3.5, 0, Math.PI, TAU); ctx.stroke(); ctx.restore(); } else ctx.fillRect(x, top, c.w, 1.1); } }; }
     else if (n.k === 'bold') L = layoutRich(n.c, size, font.replace(/(^|\s)(400|500|600)(?=\s)/, '$1700'));
+    else if (n.k === 'it') L = layoutRich(n.c, size, /^italic /.test(font) ? font : 'italic ' + font);
+    else if (n.k === 'color') { const c = layoutRich(n.c, size, font), v = n.v; L = { w: c.w, asc: c.asc, desc: c.desc, draw: (x, y) => { const f0 = ctx.fillStyle, s0 = ctx.strokeStyle; ctx.fillStyle = v; ctx.strokeStyle = v; c.draw(x, y); ctx.fillStyle = f0; ctx.strokeStyle = s0; } }; }
     else if (n.k === 'frac') { const a = layoutRich(n.a, size * 0.85, font), b = layoutRich(n.b, size * 0.85, font); const fw = Math.max(a.w, b.w) + 4, mid = size * 0.3; L = { w: fw + 2, asc: mid + a.asc + a.desc + 2, desc: Math.max(0, b.asc + b.desc + 2 - mid), draw: (x, y) => { a.draw(x + 1 + (fw - a.w) / 2, y - mid - 2 - a.desc); b.draw(x + 1 + (fw - b.w) / 2, y - mid + 2 + b.asc); ctx.fillRect(x + 1, y - mid - 0.6, fw, 1.2); } }; }
     else if (n.k === 'sqrt') { const c = layoutRich(n.c, size, font); const rw = size * 0.55; L = { w: c.w + rw + 3, asc: c.asc + 3, desc: c.desc, draw: (x, y) => { const top = y - c.asc - 2; ctx.save(); ctx.lineWidth = Math.max(1, size / 14); ctx.strokeStyle = ctx.fillStyle; ctx.beginPath(); ctx.moveTo(x, y - size * 0.3); ctx.lineTo(x + rw * 0.35, y - size * 0.4); ctx.lineTo(x + rw * 0.6, y + c.desc * 0.6); ctx.lineTo(x + rw, top); ctx.lineTo(x + rw + c.w + 2, top); ctx.stroke(); ctx.restore(); c.draw(x + rw + 1, y); } }; }
     if (!L) continue; const x0 = w; items.push([x0, L]); w += L.w; asc = Math.max(asc, L.asc); desc = Math.max(desc, L.desc);
@@ -3766,7 +3776,28 @@ GSPI.dec = (u8) => { try { return new TextDecoder('utf-8', { fatal: true }).deco
 GSPI.sub = s => String(s || '').replace(/\[(\d+)\]/g, (_, d) => subDigits(d)).replace(/\[([^\]]+)\]/g, '$1');
 GSPI.color = (r, g, b) => { if (r === 0 && g === 0 && b === 0) return 'ink'; const h = '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join(''); return { '#ff0000': 'red', '#0000ff': 'blue' }[h] || h; };
 /* GSP 텍스트 표기 <VL<H<T4x...>>> 에서 글자만 뽑기 (T 뒤 길이는 16진수, 바이트 단위) */
-GSPI.markup = (u8, start, end) => {
+// GSP 글자 모양 꼬리표 <S…> 의 속성: S2 기울임(S1 바로), W2 굵게, R·G·L 글자색(16진, 100 이 가장 밝음), O2 윗줄, #12 크기, P1 글꼴, +1 첨자 크기
+// → 앱 표기로 감싸는 앞·뒤 글자. base 와 같은 색은 감싸지 않는다 (글상자 자체의 색)
+GSPI.styWrap = (tag, base) => {
+  const W = []; let R = null, Gc = null, L = null;
+  for (const m of String(tag).slice(1).matchAll(/([A-Z#+])([0-9A-F]*)/g)) {
+    const [, k, v] = m;
+    if (k === 'S' && v === '2') W.push(['\\it{', '}']);
+    else if (k === 'W' && v === '2') W.push(['**', '**']);
+    else if (k === 'O' && v === '2') W.push(['\\overline{', '}']);
+    else if (k === 'R') R = parseInt(v, 16); else if (k === 'G') Gc = parseInt(v, 16); else if (k === 'L') L = parseInt(v, 16);
+  }
+  if (R != null && Gc != null && L != null) {
+    const hex = '#' + [R, Gc, L].map(x => Math.min(255, Math.round((x || 0) * 255 / 256)).toString(16).padStart(2, '0')).join('');
+    const near = (a, b) => a && b && [1, 3, 5].every(i => Math.abs(parseInt(a.substr(i, 2), 16) - parseInt(b.substr(i, 2), 16)) <= 6);
+    const bb = !base || base === 'ink' ? '#000000' : base === 'red' ? '#ff0000' : base === 'blue' ? '#0000ff' : base;
+    if (!near(hex, bb)) W.unshift(['\\color{' + hex + '}{', '}']);
+  }
+  return [W.map(w => w[0]).join(''), W.map(w => w[1]).reverse().join('')];
+};
+GSPI.markup = (u8, start, end, base) => {
+  GSPI._base = base; const frames = [];
+  const wrapSeg = (seg, a, b) => seg.split('\n').map(ln => { const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(ln); return m[2] ? m[1] + a + m[2] + b + m[3] : ln; }).join('\n'); // 여러 줄에 걸친 모양은 줄마다
   // <VL …> 문단, <H …> 줄(줄바꿈은 자동 줄바꿈이므로 공백으로), <0> 빈 줄(문단 나눔), <T{16진 길이}x바이트> 글자
   // <VL …> 의 자식 하나하나가 한 줄 (GSP 가 화면에 놓은 줄 그대로), <H …> 는 한 줄 안의 조각, <S…W2…> 는 굵은 글자
   let out = '', i = start, buf = [], stack = [], gap = false, nl = false, bold = false;
@@ -3785,10 +3816,10 @@ GSPI.markup = (u8, start, end) => {
       if (tag === '0' && u8[j] === 62) { flush(); out = out.replace(/ +$/, '') + '\n'; if (stack[stack.length - 1] === 'V') nl = true; i = j + 1; continue; } // 빈 줄
       if (tag[0] === '!' && u8[j] === 62) { const ch = GSPI.SYM[parseInt(tag.slice(1), 16)]; if (ch) { buf.push(...new TextEncoder().encode(ch)); } i = j + 1; continue; } // <!D7> 같은 Symbol 글꼴 문자
       if ('/+-R|'.includes(tag[0])) { flush(); const r = GSPI.mathEl(u8, i, end); buf.push(...new TextEncoder().encode(r.s)); i = r.i; const top = stack[stack.length - 1]; flush(); if (top === 'V') nl = true; continue; } // 분수·위첨자·아래첨자·근호·절댓값: 앱 수식 표기로
-      if (tag[0] === 'S' && /W2/.test(tag)) { flush(); bold = true; stack.push('B'); i = j; continue; }
+      if (tag[0] === 'S') { flush(); const [a, b] = GSPI.styWrap(tag, base); frames.push({ a, b, start: out.length }); stack.push('S'); i = j; continue; } // 굵게·기울임·색·윗줄
       stack.push(tag[0]); i = j; continue;
     }
-    if (c === 62) { flush(); const tg = stack.pop(); if (tg === 'B') { if (bold) bold = false; else out = out.replace(/(\s*)$/, '**$1'); } if (stack[stack.length - 1] === 'V') nl = true; else if (tg === 'H') gap = true; i++; continue; } // VL 의 자식 하나하나가 한 줄 (H·S 무엇이든)
+    if (c === 62) { flush(); const tg = stack.pop(); if (tg === 'S') { const fr = frames.pop(); if (fr && fr.a) out = out.slice(0, fr.start) + wrapSeg(out.slice(fr.start), fr.a, fr.b); } if (stack[stack.length - 1] === 'V') nl = true; else if (tg === 'H') gap = true; i++; continue; } // VL 의 자식 하나하나가 한 줄 (H·S 무엇이든)
     i++;
   }
   flush(); return out.replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').trim();
@@ -3805,6 +3836,7 @@ GSPI.mathEl = (u8, i0, end) => {
     if (n.t === 'T') return n.s.replace(/\r/g, '');
     const k = n.kids.map(ser), c = n.t[0];
     if (n.t === '0') return '';
+    if (c === 'S') { const [a, b] = GSPI.styWrap(n.t, GSPI._base); const s = k.join(''); return s ? a + s + b : ''; }
     if (c === '!') return GSPI.SYM[parseInt(n.t.slice(1), 16)] || '';
     if (c === '/') return '\\frac{' + (k[0] || '') + '}{' + (k[1] || '') + '}';
     if (c === '+') return (k[0] || '') + '^{' + k.slice(1).join('') + '}';
@@ -3959,7 +3991,7 @@ GSPI.build = (F, sec, links) => {
           }
           if (s.k === 4 || s.k === 41) { const r = s.rec[2201]; if (!r) break; const w = W(D(r, 0), D(r, 8)); id = P0(w); if (s.k === 41) { obj(id).isOrigin = true; pend.O = id; } break; }
           if (s.k === 39) { id = ensureCoord(); const c = obj(id); if (c) c.given = true; map[i] = id; return; } // 도구의 '좌표계' 주어진 것
-          if (s.k === 19 || s.k === 59) { const r = s.rec[2300]; if (!r) break; const q = s.rec[2200]; const sx = q ? dv.getInt16(q.p, true) : dv.getInt16(r.p + 12, true), sy = q ? dv.getInt16(q.p + 2, true) : dv.getInt16(r.p + 14, true); id = text(s, GSPI.markup(u8, r.p + 18, r.p + r.len), sx, sy); obj(id).hidden = !!(s.fl & 1); if (q && !obj(id).d.text.includes('\n')) { const w = dv.getInt16(q.p + 4, true) - sx; if (w > 60 && obj(id).d.text.length > 30) obj(id).d.wrap = w + 24; } break; } // 줄이 이미 나뉘어 있으면 GSP 의 줄을 그대로
+          if (s.k === 19 || s.k === 59) { const r = s.rec[2300]; if (!r) break; const q = s.rec[2200]; const sx = q ? dv.getInt16(q.p, true) : dv.getInt16(r.p + 12, true), sy = q ? dv.getInt16(q.p + 2, true) : dv.getInt16(r.p + 14, true); id = text(s, GSPI.markup(u8, r.p + 18, r.p + r.len, (gsty(s) || {}).color || GSPI.color(...s.rgb)), sx, sy); obj(id).hidden = !!(s.fl & 1); if (q && !obj(id).d.text.includes('\n')) { const w = dv.getInt16(q.p + 4, true) - sx; if (w > 60 && obj(id).d.text.length > 30) obj(id).d.wrap = w + 24; } break; } // 줄이 이미 나뉘어 있으면 GSP 의 줄을 그대로
           const T = toks(s); if (!T) break;
           if (s.k === 57) { id = valAt(s, 'func', [], { expr: GSPI.expr(T.t, () => null), form: T.form, notation: 'f' }); break; }
           if (s.k !== 79) { id = valAt(s, 'calc', [], { expr: GSPI.expr(T.t, () => null) }); break; } // 부모 없는 계산값(상수 식): k 는 단위 종류(48 거리·49 각·50 넓이·51 없음)
@@ -4114,7 +4146,7 @@ GSPI.build = (F, sec, links) => {
         }
         case 72: { const r = s.rec[2306]; const f = add({ t: 'fplot', k: 'fn', p: [P[1], P[0]], d: { fn: P[0], xmin: D(r, 0), xmax: D(r, 8) } }); f.label = obj(P[0]).label; id = f.id; break; }
         case 69: { const o = add({ t: 'point', k: 'plot', p: [P[2], P[0], P[1]], d: { xV: P[0], yV: P[1], polar: false } }); giveLabel(o, false); id = o.id; break; }
-        case 90: case 73: { const r = s.rec[2300]; if (!r) break; id = text(s, GSPI.markup(u8, r.p + 18, r.p + r.len), dv.getInt16(r.p + 12, true), dv.getInt16(r.p + 14, true)); obj(id).hidden = !!(s.fl & 1); if (obj(id).d.text.length > 90 && !obj(id).d.text.includes('\n')) obj(id).d.wrap = 620; map[i] = id; return; }
+        case 90: case 73: { const r = s.rec[2300]; if (!r) break; id = text(s, GSPI.markup(u8, r.p + 18, r.p + r.len, (gsty(s) || {}).color || GSPI.color(...s.rgb)), dv.getInt16(r.p + 12, true), dv.getInt16(r.p + 14, true)); obj(id).hidden = !!(s.fl & 1); if (obj(id).d.text.length > 90 && !obj(id).d.text.includes('\n')) obj(id).d.wrap = 620; map[i] = id; return; }
         case 62: {
           const r = s.rec[2310]; if (!r || r.len < 24) break;
           const ty = dv.getUint16(r.p + 12, true), sub = dv.getUint16(r.p + 14, true);
@@ -4405,10 +4437,10 @@ GSPX.markup = (text, maxw = 640) => {
   const wrap = ln => { const out = []; let cur = '', w = 0; for (const word of ln.split(/(?<=\s)/)) { const ww = [...word.replace(/\*\*/g, '')].reduce((a, c) => a + cw(c), 0); if (cur && w + ww > maxw) { out.push(cur); cur = ''; w = 0; } cur += word; w += ww; } out.push(cur); return out; };
   const enc = s => { const u = GSPX.utf8(s); return [...GSPX.utf8('<T' + u.length.toString(16).toUpperCase() + 'x'), ...u, 62]; };
   const out = [...GSPX.utf8('<VL')]; let bold = false;
-  const line = p => { if (/\\frac\{|[\^_]\{|√\{/.test(p) && !p.includes('**')) { out.push(...GSPX.mathLine(p, enc)); return; } // 수식 표기가 있는 줄: GSP 수식 구조로
+  const line = p => { if (/\\(frac|it|color|overline)\{|[\^_]\{|√\{/.test(p)) { out.push(...GSPX.mathLine(p, enc)); return; } // 수식·색·기울임 표기가 있는 줄: GSP 구조로
     const segs = p.split('**'); if (segs.length === 1 && !bold) { out.push(...enc(p)); return; }
     out.push(...GSPX.utf8('<H')); segs.forEach((sg, k) => { if (k) bold = !bold; if (!sg) return; if (bold) out.push(...GSPX.utf8('<SW2'), ...enc(sg), 62); else out.push(...enc(sg)); }); out.push(62); };
-  String(text || '').replace(/\r/g, '').split('\n').forEach(ln => { if (!ln) { out.push(...GSPX.utf8('<0>')); return; } (/\\frac\{|[\^_]\{|√\{/.test(ln) ? [ln] : wrap(ln)).forEach(line); });
+  String(text || '').replace(/\r/g, '').split('\n').forEach(ln => { if (!ln) { out.push(...GSPX.utf8('<0>')); return; } (/\\(frac|it|color|overline)\{|[\^_]\{|√\{/.test(ln) ? [ln] : wrap(ln)).forEach(line); });
   out.push(62); return out;
 };
 // 앱 수식 표기 한 줄 → GSP 수식 구조: \frac{a}{b} → </a b>, x^{n} → <+ x n>, x_{n} → <- x n>, √{x} → <R x>
@@ -4419,6 +4451,10 @@ GSPX.mathLine = (p, enc) => {
     const flush = () => { if (txt) { parts.push(enc(txt)); txt = ''; } };
     while (i < p.length) {
       if (p.startsWith('\\frac', i)) { flush(); i += 5; const a = group(), b = group(); parts.push([...GSPX.utf8('</'), ...a, ...b, 62]); continue; }
+      if (p.startsWith('\\color{', i)) { const j = p.indexOf('}', i + 7); const m = /^#?([0-9a-f]{6})$/i.exec(p.slice(i + 7, j)); if (m) { flush(); i = j + 1; const g = group(); const h = [0, 2, 4].map(k => Math.max(1, Math.round(parseInt(m[1].substr(k, 2), 16) * 256 / 255)).toString(16).toUpperCase()); parts.push([...GSPX.utf8('<SR' + h[0] + 'G' + h[1] + 'L' + h[2]), ...g, 62]); continue; } } // 일부만 다른 색: <SR…G…L… >
+      if (p.startsWith('\\it{', i)) { flush(); i += 3; const g = group(); parts.push([...GSPX.utf8('<SS2'), ...g, 62]); continue; } // 기울임: <SS2 >
+      if (p.startsWith('\\overline{', i)) { flush(); i += 9; const g = group(); parts.push([...GSPX.utf8('<SO2'), ...g, 62]); continue; } // 윗줄(선분 기호): <SO2 >
+      if (p.startsWith('**', i)) { const j = p.indexOf('**', i + 2); if (j > i + 2) { flush(); const g = seq(p.slice(i + 2, j)); i = j + 2; parts.push([...GSPX.utf8('<SW2'), ...g, 62]); continue; } } // 굵게: <SW2 >
       if ((p[i] === '^' || p[i] === '_') && p[i + 1] === '{') { // GSP: 위·아래 첨자는 <+ 밑 지수> — 밑은 바로 앞 글자(또는 앞 덩어리)
         const t = p[i] === '^' ? '+' : '-'; let base;
         if (txt) { const cs = [...txt]; base = enc(cs.pop()); txt = cs.join(''); flush(); } else base = parts.length ? parts.pop() : GSPX.utf8('<0>');
@@ -4816,7 +4852,21 @@ function wrapText(text, width, size, font) {
     }
     out.push(line.trimEnd());
   }
-  return out;
+  return balanceStyleLines(out);
+}
+// 줄을 나누다 \color{…}{…} · \it{…} · \overline{…} · **…** 가운데서 끊기면, 그 줄 끝에서 닫고 다음 줄 처음에서 다시 연다
+function balanceStyleLines(lines) {
+  let carry = [];
+  return lines.map(l => {
+    const line = carry.map(x => x.o).join('') + l, st = [];
+    for (let i = 0; i < line.length;) {
+      const m = /^(\\color\{[^}]*\}\{|\\it\{|\\overline\{)/.exec(line.slice(i, i + 20));
+      if (m) { st.push({ o: m[1], c: '}' }); i += m[1].length; continue; }
+      if (line.startsWith('**', i)) { if (st.length && st[st.length - 1].o === '**') st.pop(); else st.push({ o: '**', c: '**' }); i += 2; continue; }
+      if (line[i] === '{') st.push({ o: '{', c: '}', math: true }); else if (line[i] === '}') st.pop(); i++;
+    }
+    carry = st.filter(x => !x.math); return line + carry.map(x => x.c).reverse().join('');
+  });
 }
 
 /* ================= 데이터 함수: 부드럽게 (Catmull-Rom) ================= */

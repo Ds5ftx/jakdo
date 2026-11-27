@@ -25,7 +25,21 @@ function wrapText(text, width, size, font) {
     }
     out.push(line.trimEnd());
   }
-  return out;
+  return balanceStyleLines(out);
+}
+// 줄을 나누다 \color{…}{…} · \it{…} · \overline{…} · **…** 가운데서 끊기면, 그 줄 끝에서 닫고 다음 줄 처음에서 다시 연다
+function balanceStyleLines(lines) {
+  let carry = [];
+  return lines.map(l => {
+    const line = carry.map(x => x.o).join('') + l, st = [];
+    for (let i = 0; i < line.length;) {
+      const m = /^(\\color\{[^}]*\}\{|\\it\{|\\overline\{)/.exec(line.slice(i, i + 20));
+      if (m) { st.push({ o: m[1], c: '}' }); i += m[1].length; continue; }
+      if (line.startsWith('**', i)) { if (st.length && st[st.length - 1].o === '**') st.pop(); else st.push({ o: '**', c: '**' }); i += 2; continue; }
+      if (line[i] === '{') st.push({ o: '{', c: '}', math: true }); else if (line[i] === '}') st.pop(); i++;
+    }
+    carry = st.filter(x => !x.math); return line + carry.map(x => x.c).reverse().join('');
+  });
 }
 
 /* ================= 데이터 함수: 부드럽게 (Catmull-Rom) ================= */

@@ -113,10 +113,10 @@ GSPX.markup = (text, maxw = 640) => {
   const wrap = ln => { const out = []; let cur = '', w = 0; for (const word of ln.split(/(?<=\s)/)) { const ww = [...word.replace(/\*\*/g, '')].reduce((a, c) => a + cw(c), 0); if (cur && w + ww > maxw) { out.push(cur); cur = ''; w = 0; } cur += word; w += ww; } out.push(cur); return out; };
   const enc = s => { const u = GSPX.utf8(s); return [...GSPX.utf8('<T' + u.length.toString(16).toUpperCase() + 'x'), ...u, 62]; };
   const out = [...GSPX.utf8('<VL')]; let bold = false;
-  const line = p => { if (/\\frac\{|[\^_]\{|√\{/.test(p) && !p.includes('**')) { out.push(...GSPX.mathLine(p, enc)); return; } // 수식 표기가 있는 줄: GSP 수식 구조로
+  const line = p => { if (/\\(frac|it|color|overline)\{|[\^_]\{|√\{/.test(p)) { out.push(...GSPX.mathLine(p, enc)); return; } // 수식·색·기울임 표기가 있는 줄: GSP 구조로
     const segs = p.split('**'); if (segs.length === 1 && !bold) { out.push(...enc(p)); return; }
     out.push(...GSPX.utf8('<H')); segs.forEach((sg, k) => { if (k) bold = !bold; if (!sg) return; if (bold) out.push(...GSPX.utf8('<SW2'), ...enc(sg), 62); else out.push(...enc(sg)); }); out.push(62); };
-  String(text || '').replace(/\r/g, '').split('\n').forEach(ln => { if (!ln) { out.push(...GSPX.utf8('<0>')); return; } (/\\frac\{|[\^_]\{|√\{/.test(ln) ? [ln] : wrap(ln)).forEach(line); });
+  String(text || '').replace(/\r/g, '').split('\n').forEach(ln => { if (!ln) { out.push(...GSPX.utf8('<0>')); return; } (/\\(frac|it|color|overline)\{|[\^_]\{|√\{/.test(ln) ? [ln] : wrap(ln)).forEach(line); });
   out.push(62); return out;
 };
 // 앱 수식 표기 한 줄 → GSP 수식 구조: \frac{a}{b} → </a b>, x^{n} → <+ x n>, x_{n} → <- x n>, √{x} → <R x>
@@ -127,6 +127,10 @@ GSPX.mathLine = (p, enc) => {
     const flush = () => { if (txt) { parts.push(enc(txt)); txt = ''; } };
     while (i < p.length) {
       if (p.startsWith('\\frac', i)) { flush(); i += 5; const a = group(), b = group(); parts.push([...GSPX.utf8('</'), ...a, ...b, 62]); continue; }
+      if (p.startsWith('\\color{', i)) { const j = p.indexOf('}', i + 7); const m = /^#?([0-9a-f]{6})$/i.exec(p.slice(i + 7, j)); if (m) { flush(); i = j + 1; const g = group(); const h = [0, 2, 4].map(k => Math.max(1, Math.round(parseInt(m[1].substr(k, 2), 16) * 256 / 255)).toString(16).toUpperCase()); parts.push([...GSPX.utf8('<SR' + h[0] + 'G' + h[1] + 'L' + h[2]), ...g, 62]); continue; } } // 일부만 다른 색: <SR…G…L… >
+      if (p.startsWith('\\it{', i)) { flush(); i += 3; const g = group(); parts.push([...GSPX.utf8('<SS2'), ...g, 62]); continue; } // 기울임: <SS2 >
+      if (p.startsWith('\\overline{', i)) { flush(); i += 9; const g = group(); parts.push([...GSPX.utf8('<SO2'), ...g, 62]); continue; } // 윗줄(선분 기호): <SO2 >
+      if (p.startsWith('**', i)) { const j = p.indexOf('**', i + 2); if (j > i + 2) { flush(); const g = seq(p.slice(i + 2, j)); i = j + 2; parts.push([...GSPX.utf8('<SW2'), ...g, 62]); continue; } } // 굵게: <SW2 >
       if ((p[i] === '^' || p[i] === '_') && p[i + 1] === '{') { // GSP: 위·아래 첨자는 <+ 밑 지수> — 밑은 바로 앞 글자(또는 앞 덩어리)
         const t = p[i] === '^' ? '+' : '-'; let base;
         if (txt) { const cs = [...txt]; base = enc(cs.pop()); txt = cs.join(''); flush(); } else base = parts.length ? parts.pop() : GSPX.utf8('<0>');

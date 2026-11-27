@@ -31,6 +31,8 @@ function parseRich(s) {
   while (i < s.length) {
     const c = s[i];
     if (c === '^' || c === '_') { i++; out.push({ k: c === '^' ? 'sup' : 'sub', c: group() }); continue; }
+    if (s.startsWith('\\color{', i)) { const j = s.indexOf('}', i + 7); if (j > 0) { const v = s.slice(i + 7, j); i = j + 1; out.push({ k: 'color', v, c: group() }); continue; } } // \color{#ff8000}{글자}: 일부만 다른 색
+    if (s.startsWith('\\it{', i)) { i += 3; out.push({ k: 'it', c: group() }); continue; } // \it{글자}: 기울임
     if (s.startsWith('\\overline', i)) { i += 9; out.push({ k: 'over', c: group() }); continue; }
     if (s.startsWith('\\arc', i)) { i += 4; out.push({ k: 'arcm', c: group() }); continue; }
     if (s.startsWith('\\frac', i)) { i += 5; const a = group(), b = group(); out.push({ k: 'frac', a, b }); continue; }
@@ -53,6 +55,8 @@ function layoutRich(nodes, size, font) {
     else if (n.k === 'sup' || n.k === 'sub') { const c = layoutRich(n.c, size * 0.7, font); const dy = n.k === 'sup' ? -size * 0.4 : size * 0.25; L = { w: c.w + 1, asc: Math.max(size * 0.8, c.asc - dy), desc: Math.max(size * 0.25, c.desc + dy), draw: (x, y) => c.draw(x, y + dy) }; }
     else if (n.k === 'over' || n.k === 'arcm') { const c = layoutRich(n.c, size, font); const arc = n.k === 'arcm'; L = { w: c.w, asc: c.asc + 4, desc: c.desc, draw: (x, y) => { c.draw(x, y); const top = y - c.asc - 2; if (arc) { ctx.save(); ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 1.1; ctx.beginPath(); ctx.ellipse(x + c.w / 2, top + 2, c.w / 2, 3.5, 0, Math.PI, TAU); ctx.stroke(); ctx.restore(); } else ctx.fillRect(x, top, c.w, 1.1); } }; }
     else if (n.k === 'bold') L = layoutRich(n.c, size, font.replace(/(^|\s)(400|500|600)(?=\s)/, '$1700'));
+    else if (n.k === 'it') L = layoutRich(n.c, size, /^italic /.test(font) ? font : 'italic ' + font);
+    else if (n.k === 'color') { const c = layoutRich(n.c, size, font), v = n.v; L = { w: c.w, asc: c.asc, desc: c.desc, draw: (x, y) => { const f0 = ctx.fillStyle, s0 = ctx.strokeStyle; ctx.fillStyle = v; ctx.strokeStyle = v; c.draw(x, y); ctx.fillStyle = f0; ctx.strokeStyle = s0; } }; }
     else if (n.k === 'frac') { const a = layoutRich(n.a, size * 0.85, font), b = layoutRich(n.b, size * 0.85, font); const fw = Math.max(a.w, b.w) + 4, mid = size * 0.3; L = { w: fw + 2, asc: mid + a.asc + a.desc + 2, desc: Math.max(0, b.asc + b.desc + 2 - mid), draw: (x, y) => { a.draw(x + 1 + (fw - a.w) / 2, y - mid - 2 - a.desc); b.draw(x + 1 + (fw - b.w) / 2, y - mid + 2 + b.asc); ctx.fillRect(x + 1, y - mid - 0.6, fw, 1.2); } }; }
     else if (n.k === 'sqrt') { const c = layoutRich(n.c, size, font); const rw = size * 0.55; L = { w: c.w + rw + 3, asc: c.asc + 3, desc: c.desc, draw: (x, y) => { const top = y - c.asc - 2; ctx.save(); ctx.lineWidth = Math.max(1, size / 14); ctx.strokeStyle = ctx.fillStyle; ctx.beginPath(); ctx.moveTo(x, y - size * 0.3); ctx.lineTo(x + rw * 0.35, y - size * 0.4); ctx.lineTo(x + rw * 0.6, y + c.desc * 0.6); ctx.lineTo(x + rw, top); ctx.lineTo(x + rw + c.w + 2, top); ctx.stroke(); ctx.restore(); c.draw(x + rw + 1, y); } }; }
     if (!L) continue; const x0 = w; items.push([x0, L]); w += L.w; asc = Math.max(asc, L.asc); desc = Math.max(desc, L.desc);
