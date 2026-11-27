@@ -129,7 +129,7 @@ GSPI.build = (F, sec, links) => {
   const label = (src, o) => {
     const r = src.rec[2005]; if (!r || r.len < 24) return;
     const n = dv.getUint16(r.p + 22, true); if (!n) return;
-    const s = GSPI.sub(GSPI.dec(u8.slice(r.p + 24, r.p + 24 + n)).replace(/\0.*$/, ''));
+    const raw = GSPI.dec(u8.slice(r.p + 24, r.p + 24 + n)).replace(/\0.*$/, ''), s = /^\[[^\]]*\]$/.test(raw) ? raw : GSPI.sub(raw); // 이름 전체가 [1] 이면 아래 첨자가 아니라 그대로 (그림 이름)
     if (s) { o.label = s; o.showLabel = dv.getUint16(r.p + 2, true) === 1; const ty = dv.getUint16(r.p, true); o.ltype = ty; o._glo = ty === 7 ? { x: dv.getInt16(r.p + 6, true), y: dv.getInt16(r.p + 8, true) } : { x: 6, y: 6 }; } // 7: 레이블 왼쪽 위 = 점 + (dx, dy) / 6: GSP 가 자동으로 오른쪽 아래
   };
   const style = (src, o) => {
@@ -162,7 +162,7 @@ GSPI.build = (F, sec, links) => {
   const text = (src, s, sx, sy, extra = {}) => add({ t: 'text', k: 'cap', d: { text: s, sx, sy, size: 14, ...extra }, color: GSPI.color(...src.rgb) }).id;
   const valAt = (src, k, p, extra = {}) => { const id = mkValue(k, p, extra); const q = pos(src, 2307) || pos(src, 2311); if (q) Object.assign(obj(id).d, q);
     const r = src.rec[2307] || src.rec[2311]; // 표시 이름: 표시 문자열이 '<0>'(자동)이 아니면 그 글자가 측정값 이름
-    if (r && r.len >= 20 && k !== 'func' && k !== 'param') { const n = dv.getUint16(r.p + 16, true); if (n > 3 && 18 + n <= r.len) { try { const nm = GSPI.markup(u8, r.p + 18, r.p + 18 + n).trim(); if (nm) obj(id).d.name = nm; } catch (e) { } }
+    if (r && r.len >= 20 && k !== 'func' && k !== 'picfn' && k !== 'param') { const n = dv.getUint16(r.p + 16, true); if (n > 3 && 18 + n <= r.len) { try { const nm = GSPI.markup(u8, r.p + 18, r.p + 18 + n).trim(); if (nm) obj(id).d.name = nm; } catch (e) { } }
       else if (n === 3 && r.len >= 28 && dv.getUint16(r.p + 26, true) === 1) obj(id).d.vonly = true; // 방식 1: 값만 보임
       else if (n === 3 && r.len >= 28 && dv.getUint16(r.p + 26, true) === 3) { const l = src.rec[2005]; if (l && l.len >= 24) { const m = dv.getUint16(l.p + 22, true); const nm = GSPI.dec(u8.slice(l.p + 24, l.p + 24 + Math.min(m, l.len - 24))).replace(/\0.*$/, '').trim(); if (nm) obj(id).d.name = nm.replace(/\[(\d+)\]/g, (q, d) => [...d].map(c => String.fromCharCode(0x2080 + +c)).join('')); } } } // 방식 3: 이름표(2005)를 측정값 이름으로
     if (r && r.len >= 30 && k !== 'func' && dv.getUint16(r.p + 16, true) === 3) { const pr = dv.getUint16(r.p + 28, true); if (pr <= 8 && pr !== 2) obj(id).prec = pr; } // 소수 자리 (GSP 기본 2)
@@ -196,7 +196,7 @@ GSPI.build = (F, sec, links) => {
             const TL = W(tx, ty), TR = W(tx + a * pic.w, ty + c * pic.w), BL = W(tx + b * pic.h, ty + d * pic.h);
             if (Math.abs(b) < 1e-9 && Math.abs(c) < 1e-9 && Math.abs(a - d) < 1e-9 && a > 0) id = add({ t: 'picture', k: 'free', p: [], d: { src: pic.src, w: pic.w, h: pic.h, ww: TR.x - TL.x, x: TL.x, y: TL.y }, color: 'ink' }).id;
             else { const q = [TL, TR, BL].map(w => { const pid = P0(w); const po = obj(pid); po.hidden = true; po.showLabel = false; po.d.pich = true; return pid; }); id = add({ t: 'picture', k: 'pts', p: q, d: { src: pic.src, w: pic.w, h: pic.h }, color: 'ink' }).id; }
-            obj(id).hidden = !!(s.fl & 1); map[i] = id; return;
+            obj(id).hidden = !!(s.fl & 1); label(s, obj(id)); obj(id).showLabel = false; if (s.k !== 78) obj(id).d.gk = s.k; map[i] = id; return; // 그림 이름([1] 등)은 그림으로 정의한 함수의 표시에 쓴다
           }
           if (s.k === 4 || s.k === 41) { const r = s.rec[2201]; if (!r) break; const w = W(D(r, 0), D(r, 8)); id = P0(w); if (s.k === 41) { obj(id).isOrigin = true; pend.O = id; } break; }
           if (s.k === 39) { id = ensureCoord(); const c = obj(id); if (c) c.given = true; map[i] = id; return; } // 도구의 '좌표계' 주어진 것
@@ -258,6 +258,7 @@ GSPI.build = (F, sec, links) => {
         case 113: case 114: case 115: id = add({ t: 'amark', k: 'm', p: [P[0], P[1], P[2]], d: { n: s.code - 112 } }).id; break; // 각 표시 (호 1·2·3겹)
         case 24: { const r = s.rec[2003]; id = mkXf(P[0], { type: 'tr', distV: P[1], ang: D(r, 20) }); break; } // 측정한 거리만큼, 정한 각도로 평행이동
         case 29: id = mkXf(P[0], { type: 'rot', c: P[1], angV: P[2] }); break; // 측정한 각만큼 회전
+        case 122: { const pic = obj(P[0]), cs = obj(P[1]); if (!pic || pic.t !== 'picture' || !cs || cs.t !== 'coord') break; id = valAt(s, 'picfn', [P[0], P[1]], { form: 'yx', notation: 'f' }); { const ps = sec.objs[s.par[0]]; if (ps && ps.k === 78) obj(id).d.photo = true; } break; } // 그림으로 함수 정의 (GSP 는 사진(78)·그림(98)으로 부른다)
         case 119: { const m = obj(P[2]); if (!m || m.t !== 'amark') break; id = mkXf(P[0], { type: 'rot', c: P[1], angP: m.p.slice() }); break; } // 표시한 각(각 표시)만큼 회전
         case 120: { const m = obj(P[0]); if (!m || m.t !== 'amark') break; id = valAt(s, 'angle', m.p.slice()); obj(id).d.mark = P[0]; break; } // 각 표시의 크기
         case 31: id = mkXf(P[0], { type: 'dil', c: P[1], rS: [P[2], P[3]] }); break; // 두 선분의 비로 확대

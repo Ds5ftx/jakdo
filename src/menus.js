@@ -379,7 +379,7 @@ const MENUS = [
     { label: '표 데이터 지우기', sub: () => [{ label: '마지막 행', run: () => removeTableData(S().os[0], false) }, { label: '모든 행', run: () => removeTableData(S().os[0], true) }].map(x => ({ ...x, en: () => S().n === 1 && S().os[0].t === 'table' && S().os[0].k !== 'iter' })) },
     sep,
     { label: '새 함수…', run: () => functionDialog(null, { plot: false }) },
-    { label: '그림에서 함수 정의', run: () => S().os[0].t === 'picture' ? functionFromPicture() : functionFromDrawing(), en: () => S().n === 1 && (S().os[0].t === 'drawing' || S().os[0].t === 'picture') },
+    { label: '그림에서 함수 정의', run: () => S().os[0].t === 'picture' ? functionFromPictureLive() : functionFromDrawing(), en: () => S().n === 1 && (S().os[0].t === 'drawing' || S().os[0].t === 'picture') },
     { label: '도함수 정의', run: () => { snap(); setSel(S().os.filter(o => o.t === 'value' && isFnObj(o)).map(mkDerivative)); }, en: () => { const s = S(); return s.n >= 1 && s.os.every(o => o.t === 'value' && isFnObj(o)); } },
   ] },
   { name: '그래프', items: [

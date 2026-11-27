@@ -368,6 +368,9 @@ function buildGSP() {
             const M = { ratio3: [47, 51], len: [36, 48], dist: [37, 48], angle: [41, 49], area: [42, 50], arclen: [44, 48], radius: [46, 48], x: [65, 51], y: [66, 51], slope: [87, 51], ptval: [94, 51] }[o.k];
             if (o.k === 'dist' && isStraight(obj(o.p[1]))) id = emit(38, 7, 48, par, o, valRec(o)); // 점과 직선류 사이의 거리
             else if (o.k === 'circum') id = emit(40, 7, 48, par, o, valRec(o)); // 원의 둘레
+            else if (o.k === 'picfn') { const pic = P1(o.p[0]), cs = P1(o.p[1]); if (!pic || !cs) throw 0; // 그림으로 함수 정의 (GSP 122)
+              const rec = new GSPX.B().bytes(GSPX.disp(o.d.sx || 10, o.d.sy || 10, 0, 2).get()).hex('07090000').u32(0x3c).u32(0x30).zeros(20).u32(1).u32(1).zeros(18).get();
+              id = emit(122, 11, 97, [pic, cs], o, [[2003, new GSPX.B().u32(122).u32(3).zeros(8).get()], [2311, rec], [2005, GSPX.label({ label: o.label || 'f', showLabel: false }, 6)], [2008, Uint8Array.of(3, 0)]]); }
             else if (o.k === 'ptval' && o.d.fx) { const pt = obj(o.p[0]), cs = doc.coordId && P1(doc.coordId); if (!pt || !cs) throw 0; let txt = ''; try { txt = valueText(o); } catch (e) { } id = emit(74, 0, 34, [P1(pt.id), cs], o, [[2300, GSPX.capRec(GSPX.markup(txt || 'x'), o.d.sx || 10, o.d.sy || 10)], [2008, Uint8Array.of(0, 0)]]); } // 함수 그래프 위 점의 x 값
             else if (M) { let p = par; if (o.k === 'ptval') { const pt = obj(o.p[0]); if (!pt || pt.k !== 'on') throw 0; p = [P1(pt.id), P1(pt.p[0])]; } if ((o.k === 'x' || o.k === 'y' || o.k === 'slope') && p.length === 1) { const cs = doc.coordId && P1(doc.coordId); if (!cs) throw 0; p = [p[0], cs]; } id = emit(M[0], 7, M[1], p, o, valRec(o)); }
             else if (o.k === 'coords') { let p = par.slice(0, 2); if (p.length === 1) { const cs = doc.coordId && P1(doc.coordId); if (!cs) throw 0; p = [p[0], cs]; } let txt = ''; try { txt = valueText(o); } catch (e) { } id = emit(49, 0, 34, p, o, [[2300, GSPX.capRec(GSPX.markup(txt || '( , )'), o.d.sx || 10, o.d.sy || 10)], [2008, Uint8Array.of(0, 0)]]); }
@@ -387,7 +390,7 @@ function buildGSP() {
               if (code === 99) rs.unshift([2003, new GSPX.B().u32(99).f64((o.d.ww || pb.w / PXCM) * PXCM / pb.w).f64((o.d.ww || pb.w / PXCM) * PXCM / pb.w).f64(0).get()]);
               id = emit(code, 16, 78, pins.map(P1), hdr, rs, { e: 0x121, pic: true });
             } else
-            id = emit(0, 16, 78, [], hdr, [[2316, new GSPX.B().u32(pb.w).u32(pb.h).u32(pb.w).u32(pb.h).get()], [2216, new GSPX.B().f64((x1 - x0) / pb.w).f64((x2 - x0) / pb.h).f64(x0).f64((y1 - y0) / pb.w).f64((y2 - y0) / pb.h).f64(y0).get()], [8004, new GSPX.B().u16(k).get()]], { e: 0x121, pic: true });
+            id = emit(0, 16, o.d.gk === 98 ? 98 : 78, [], hdr, [[2316, new GSPX.B().u32(pb.w).u32(pb.h).u32(pb.w).u32(pb.h).get()], [2216, new GSPX.B().f64((x1 - x0) / pb.w).f64((x2 - x0) / pb.h).f64(x0).f64((y1 - y0) / pb.w).f64((y2 - y0) / pb.h).f64(y0).get()], [8004, new GSPX.B().u16(k).get()], ...(o.label ? [[2005, GSPX.label({ label: o.label, showLabel: false }, 6)]] : [])], { e: 0x121, pic: true }); // 98: GSP 가 「그림」으로, 78: 「사진」으로 부르는 그림
           } else if (id == null && o.t === 'text') {
             const txt = String(o.d.text || '').replace(/\{#\d+\}/g, '');
             const mk = GSPX.markup(txt, o.d.wrap || (txt.includes('\n') ? 1e9 : 640)); const sx = o.d.sx || 10, sy = o.d.sy || 10;

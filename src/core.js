@@ -67,7 +67,7 @@ function labelKind(o) {
   if (o.t === 'point') return 'P'; if (isStraight(o)) return 'L';
   if (o.t === 'circle') return 'c'; if (o.t === 'arc') return 'a';
   if (isInterior(o)) return 'p'; if (o.t === 'fplot') return 'f';
-  if (o.t === 'value') return o.k === 'param' ? 't' : ['func', 'deriv', 'data'].includes(o.k) ? 'f' : 'm';
+  if (o.t === 'value') return o.k === 'param' ? 't' : ['func', 'deriv', 'data', 'picfn'].includes(o.k) ? 'f' : 'm';
   return 'x';
 }
 function giveLabel(o, show) { o.label = nextLabel(labelKind(o)); o.showLabel = !!show || (doc.prefs.labelAll && o.t !== 'value' && o.t !== 'fplot' && !o.hidden && show !== false && o.t !== 'point'); return o; }
@@ -527,7 +527,7 @@ function computeValue(o, Gx) {
       else { const c = toCoord(s.c, Gx, cid), rr = s.r / co.ux; r = N(NaN); r.eq = { circle: true, c, r: rr, ellipse: co.ux !== co.uy, ry: s.r / co.uy }; }
       break;
     }
-    case 'func': case 'deriv': case 'data': return computeFunc(o, Gx);
+    case 'func': case 'deriv': case 'data': case 'picfn': return computeFunc(o, Gx);
     case 'ptval': { const s = g(0); if (s) { const P = obj(o.p[0]), path = P && P.k === 'on' ? obj(P.p[0]) : null, gp = path && Gx[path.id]; let t = P.d.t; if (gp) { try { const q = pathProj(path, gp, s); if (isFinite(q)) t = q; } catch (e) { } } r = N(t); } break; } // 자취·드래그 중에도 실제 위치에서 읽음
     case 'fdef': { if (g(0)) { r = N(NaN); r.fdef = true; } break; }
     case 'param': r = { raw: o.d.v, v: o.d.v, u: o.d.unit || 'none' }; if (r.u === 'dist') r.raw = o.d.v; if (r.u === 'angle') r.raw = o.d.v * (doc.prefs.deg ? D2R : 1); return r;
@@ -576,7 +576,7 @@ function valueName(o) {
     case 'y': return (G[coordOf(o)] && G[coordOf(o)].form === 'polar' ? 'θ' : 'y') + '[' + n(0) + ']';
     case 'coorddist': return '좌표 거리 ' + n(0) + n(1);
     case 'ratio3': return n(0) + n(2) + ' / ' + n(0) + n(1);
-    case 'func': case 'deriv': case 'data': return disp(o.label);
+    case 'func': case 'deriv': case 'data': case 'picfn': return disp(o.label);
     case 'slope': return '기울기 ' + n(0);
     case 'eq': return n(0);
     case 'ptval': return n(0) + '의 경로 위치';
@@ -589,7 +589,7 @@ function valueName(o) {
 function valueText(o) { const t = valueText0(o); if (o.d && o.d.vonly) { const i = t.indexOf(' = '); if (i >= 0) return t.slice(i + 3); } return t; } // vonly: GSP 표시 방식 1(값만)
 function valueText0(o) {
   const g = G[o.id], name = valueName(o);
-  if (['func', 'deriv', 'data'].includes(o.k)) return funcText(o);
+  if (['func', 'deriv', 'data', 'picfn'].includes(o.k)) return funcText(o);
   if (!g) return name + ' = 정의되지 않음';
   if (o.k === 'coords') return name + ' = (' + fmt(g.vx) + ', ' + fmt(g.vy) + (g.polar ? unitStr('angle') : '') + ')';
   if (g.isFn) return funcText(o);

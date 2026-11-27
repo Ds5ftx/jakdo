@@ -43,6 +43,51 @@ function dataFn(xs, ys, smooth) {
 }
 
 /* ================= 사진(그림)에서 함수 정의 ================= */
+// GSP 「그림으로 함수 정의」: f(x) = x 위에서 그림의 가장 높은 점의 y. 그림·좌표계를 부모로 두어 그림을 옮기거나 늘이면 함수도 바뀐다.
+// 투명한 바탕의 그림은 불투명한 픽셀, 바탕이 모두 불투명한 그림(사진 등)은 어두운 픽셀을 그림으로 본다.
+const picMaskCache = new Map();
+function picMask(src) {
+  const c0 = picMaskCache.get(src); if (c0) return c0;
+  const im = imgOf(src);
+  if (!im.complete || !im.naturalWidth) { if (!im._pfWait) { im._pfWait = true; im.addEventListener('load', () => { recompute(); requestDraw(); }); } return null; }
+  const w = im.naturalWidth, h = im.naturalHeight, k = Math.min(1, 1200 / Math.max(w, h)), cw = Math.max(1, Math.round(w * k)), ch = Math.max(1, Math.round(h * k));
+  const c = document.createElement('canvas'); c.width = cw; c.height = ch; const x2 = c.getContext('2d'); x2.drawImage(im, 0, 0, cw, ch);
+  let data = null; try { data = x2.getImageData(0, 0, cw, ch).data; } catch (e) { }
+  const m = { cw, ch, op: null, top: null, bot: null };
+  if (data) {
+    let clear = false; for (let q = 3; q < data.length; q += 4) if (data[q] < 128) { clear = true; break; }
+    const op = new Uint8Array(cw * ch), top = new Int32Array(cw).fill(-1), bot = new Int32Array(cw).fill(-1);
+    for (let j = 0; j < ch; j++) for (let i = 0; i < cw; i++) { const q = (j * cw + i) * 4; const on = clear ? data[q + 3] >= 128 : data[q + 3] >= 128 && 0.299 * data[q] + 0.587 * data[q + 1] + 0.114 * data[q + 2] < 140; if (on) { op[j * cw + i] = 1; if (top[i] < 0) top[i] = j; bot[i] = j; } }
+    Object.assign(m, { op, top, bot });
+  }
+  picMaskCache.set(src, m); return m;
+}
+function picTopFn(pg, co) {
+  const e1 = vsub(pg.TR, pg.TL), e2 = vsub(pg.BL, pg.TL), det = e1.x * e2.y - e1.y * e2.x;
+  return x => {
+    const m = picMask(pg.src); if (!m || !m.op || Math.abs(det) < 1e-12) return NaN;
+    const X = co.o.x + x * co.ux;
+    if (Math.abs(e1.y) < 1e-9 && Math.abs(e2.x) < 1e-9) { // 기울지 않은 그림: 열마다 미리 구한 맨 위·맨 아래
+      const u = (X - pg.TL.x) / e1.x; if (!(u >= 0 && u < 1)) return NaN;
+      const topIsHigh = (e2.y < 0) === (co.uy > 0), row = c => { const r = topIsHigh ? m.top[c] : m.bot[c]; return r < 0 ? NaN : (topIsHigh ? r : r + 1); };
+      const q = u * m.cw - 0.5, c0 = Math.max(0, Math.floor(q)), c1 = Math.min(m.cw - 1, c0 + 1), f = Math.max(0, Math.min(1, q - c0)); // 이웃한 두 열의 가운데 사이는 직선으로 (GSP 와 같게)
+      const r0 = row(c0), r1 = row(c1), r = isFinite(r0) && isFinite(r1) ? r0 + (r1 - r0) * f : isFinite(r0) ? r0 : r1; if (!isFinite(r)) return NaN;
+      const Y = pg.TL.y + r / m.ch * e2.y; return (Y - co.o.y) / co.uy;
+    }
+    const ys = [pg.TL.y, pg.TR.y, pg.BL.y, pg.TR.y + e2.y]; let y0 = Math.max(...ys), y1 = Math.min(...ys); if (co.uy < 0) [y0, y1] = [y1, y0];
+    const N = 2 * Math.max(m.cw, m.ch);
+    for (let i = 0; i <= N; i++) { // 돌린 그림: 높은 쪽부터 내려가며 처음 만나는 픽셀
+      const Y = y0 + (y1 - y0) * i / N, dx = X - pg.TL.x, dy = Y - pg.TL.y, u = (dx * e2.y - dy * e2.x) / det, v = (e1.x * dy - e1.y * dx) / det;
+      if (u < 0 || u >= 1 || v < 0 || v >= 1) continue; if (m.op[Math.floor(v * m.ch) * m.cw + Math.floor(u * m.cw)]) return (Y - co.o.y) / co.uy;
+    }
+    return NaN;
+  };
+}
+function functionFromPictureLive() {
+  const pic = S().os.find(o => o.t === 'picture'); if (!pic || !G[pic.id]) return;
+  snap(); const cid = ensureCoord(); const id = mkValue('picfn', [pic.id, cid], { form: 'yx', notation: 'f' }); recompute(); setSel([id]);
+  toast(picMask(G[pic.id].src) ? '그림의 가장 높은 점으로 함수를 정의했습니다 (그림을 옮기면 함수도 바뀝니다)' : '그림을 불러오면 함수가 정해집니다');
+}
 function functionFromPicture() {
   const pic = S().os.find(o => o.t === 'picture'), g = G[pic.id]; const im = imgOf(g.src);
   if (!im.complete || !im.naturalWidth) return toast('그림을 불러오는 중입니다. 잠시 뒤 다시 해 보세요');

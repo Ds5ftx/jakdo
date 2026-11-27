@@ -273,7 +273,7 @@ function labelKind(o) {
   if (o.t === 'point') return 'P'; if (isStraight(o)) return 'L';
   if (o.t === 'circle') return 'c'; if (o.t === 'arc') return 'a';
   if (isInterior(o)) return 'p'; if (o.t === 'fplot') return 'f';
-  if (o.t === 'value') return o.k === 'param' ? 't' : ['func', 'deriv', 'data'].includes(o.k) ? 'f' : 'm';
+  if (o.t === 'value') return o.k === 'param' ? 't' : ['func', 'deriv', 'data', 'picfn'].includes(o.k) ? 'f' : 'm';
   return 'x';
 }
 function giveLabel(o, show) { o.label = nextLabel(labelKind(o)); o.showLabel = !!show || (doc.prefs.labelAll && o.t !== 'value' && o.t !== 'fplot' && !o.hidden && show !== false && o.t !== 'point'); return o; }
@@ -733,7 +733,7 @@ function computeValue(o, Gx) {
       else { const c = toCoord(s.c, Gx, cid), rr = s.r / co.ux; r = N(NaN); r.eq = { circle: true, c, r: rr, ellipse: co.ux !== co.uy, ry: s.r / co.uy }; }
       break;
     }
-    case 'func': case 'deriv': case 'data': return computeFunc(o, Gx);
+    case 'func': case 'deriv': case 'data': case 'picfn': return computeFunc(o, Gx);
     case 'ptval': { const s = g(0); if (s) { const P = obj(o.p[0]), path = P && P.k === 'on' ? obj(P.p[0]) : null, gp = path && Gx[path.id]; let t = P.d.t; if (gp) { try { const q = pathProj(path, gp, s); if (isFinite(q)) t = q; } catch (e) { } } r = N(t); } break; } // 자취·드래그 중에도 실제 위치에서 읽음
     case 'fdef': { if (g(0)) { r = N(NaN); r.fdef = true; } break; }
     case 'param': r = { raw: o.d.v, v: o.d.v, u: o.d.unit || 'none' }; if (r.u === 'dist') r.raw = o.d.v; if (r.u === 'angle') r.raw = o.d.v * (doc.prefs.deg ? D2R : 1); return r;
@@ -782,7 +782,7 @@ function valueName(o) {
     case 'y': return (G[coordOf(o)] && G[coordOf(o)].form === 'polar' ? 'θ' : 'y') + '[' + n(0) + ']';
     case 'coorddist': return '좌표 거리 ' + n(0) + n(1);
     case 'ratio3': return n(0) + n(2) + ' / ' + n(0) + n(1);
-    case 'func': case 'deriv': case 'data': return disp(o.label);
+    case 'func': case 'deriv': case 'data': case 'picfn': return disp(o.label);
     case 'slope': return '기울기 ' + n(0);
     case 'eq': return n(0);
     case 'ptval': return n(0) + '의 경로 위치';
@@ -795,7 +795,7 @@ function valueName(o) {
 function valueText(o) { const t = valueText0(o); if (o.d && o.d.vonly) { const i = t.indexOf(' = '); if (i >= 0) return t.slice(i + 3); } return t; } // vonly: GSP 표시 방식 1(값만)
 function valueText0(o) {
   const g = G[o.id], name = valueName(o);
-  if (['func', 'deriv', 'data'].includes(o.k)) return funcText(o);
+  if (['func', 'deriv', 'data', 'picfn'].includes(o.k)) return funcText(o);
   if (!g) return name + ' = 정의되지 않음';
   if (o.k === 'coords') return name + ' = (' + fmt(g.vx) + ', ' + fmt(g.vy) + (g.polar ? unitStr('angle') : '') + ')';
   if (g.isFn) return funcText(o);
@@ -1274,7 +1274,7 @@ function nearPaths(sx, sy, tol) {
 const cToW = (co, x, y) => ({ x: co.o.x + x * co.ux, y: co.o.y + y * co.uy });
 const wToC = (co, p) => ({ x: (p.x - co.o.x) / co.ux, y: (p.y - co.o.y) / co.uy });
 function coordOf(o) { const last = o.p[o.p.length - 1]; const lo = obj(last); return lo && lo.t === 'coord' ? last : doc.coordId; }
-const isFnObj = o => !!o && (o.t === 'fplot' || (o.t === 'value' && ['func', 'deriv', 'data'].includes(o.k)));
+const isFnObj = o => !!o && (o.t === 'fplot' || (o.t === 'value' && ['func', 'deriv', 'data', 'picfn'].includes(o.k)));
 const FORM_VAR = { yx: 'x', xy: 'y', rt: 'θ' };
 
 /* ================= 함수 그래프 매개화 ================= */
@@ -1316,6 +1316,7 @@ function compileFn(id, Gx) { const g = Gx[id]; return g && g.f ? g.f : (() => Na
 
 /* ================= 함수 값 객체 (새 함수 / 도함수) ================= */
 function computeFunc(o, Gx) {
+  if (o.k === 'picfn') { const pg = Gx[o.p[0]], co = Gx[o.p[1]]; if (!pg || !pg.TL || !co || co.form === 'polar') return null; return { v: NaN, u: 'none', isFn: true, f: picTopFn(pg, co) }; } // 그림으로 정의한 함수 (GSP 122)
   if (o.k === 'data') {
     const f = dataFn(o.d.xs, o.d.ys, !!o.d.smooth);
     return { v: NaN, u: 'none', f, isFn: true };
@@ -1328,6 +1329,7 @@ function computeFunc(o, Gx) {
 function funcText(o) {
   const v = FORM_VAR[o.d.form || 'yx'];
   if (o.k === 'data') return disp(o.label) + '(' + v + ') : 그림에서 정의된 함수';
+  if (o.k === 'picfn') { const pic = obj(o.p[0]); return disp(o.label) + '(' + v + ') : ' + (o.d.photo ? '사진' : '그림') + (pic && pic.label ? ' ' + (/^\[[^\]]*\]$/.test(pic.label) ? pic.label : disp(pic.label)) : ''); }
   if (o.k === 'deriv' && o.d.numeric) return disp(o.label) + '(' + v + ') ≈ ' + disp(obj(o.p[0]) ? obj(o.p[0]).label : '?') + '의 도함수';
   let body = storedToDisplay(o.d.expr); if (v !== 'x') body = body.replace(/\bx\b/g, v);
   const lhs = o.d.notation === 'y' ? (o.d.form === 'xy' ? 'x' : o.d.form === 'rt' ? 'r' : 'y') : disp(o.label) + '(' + v + ')';
@@ -1339,7 +1341,7 @@ function expandCalls(a, depth = 0) {
   if (!Array.isArray(a)) return a;
   if (a[0] === 'call') {
     const fo = obj(a[1]); const arg = expandCalls(a[2], depth);
-    if (!fo || depth > 8 || fo.k === 'data' || (fo.k === 'deriv' && fo.d.numeric)) throw new Error('nosym');
+    if (!fo || depth > 8 || fo.k === 'data' || fo.k === 'picfn' || (fo.k === 'deriv' && fo.d.numeric)) throw new Error('nosym');
     const src = fo.t === 'fplot' ? fo.d.expr : fo.d.expr; const body = parseExpr(src, id => id === 'x' ? ['x'] : null);
     return substX(expandCalls(body, depth + 1), arg);
   }
@@ -2683,7 +2685,7 @@ const MENUS = [
     { label: '표 데이터 지우기', sub: () => [{ label: '마지막 행', run: () => removeTableData(S().os[0], false) }, { label: '모든 행', run: () => removeTableData(S().os[0], true) }].map(x => ({ ...x, en: () => S().n === 1 && S().os[0].t === 'table' && S().os[0].k !== 'iter' })) },
     sep,
     { label: '새 함수…', run: () => functionDialog(null, { plot: false }) },
-    { label: '그림에서 함수 정의', run: () => S().os[0].t === 'picture' ? functionFromPicture() : functionFromDrawing(), en: () => S().n === 1 && (S().os[0].t === 'drawing' || S().os[0].t === 'picture') },
+    { label: '그림에서 함수 정의', run: () => S().os[0].t === 'picture' ? functionFromPictureLive() : functionFromDrawing(), en: () => S().n === 1 && (S().os[0].t === 'drawing' || S().os[0].t === 'picture') },
     { label: '도함수 정의', run: () => { snap(); setSel(S().os.filter(o => o.t === 'value' && isFnObj(o)).map(mkDerivative)); }, en: () => { const s = S(); return s.n >= 1 && s.os.every(o => o.t === 'value' && isFnObj(o)); } },
   ] },
   { name: '그래프', items: [
@@ -3231,7 +3233,7 @@ function mergeOnPath(pt, path) { snap(); const g = G[path.id]; pt.k = 'on'; pt.p
 /* ================= 정의 편집 / 앞뒤 ================= */
 function editDefinition() {
   const o = S().os[0]; if (!o) return;
-  if (o.t === 'value') { if (o.k === 'calc') return calcDialog(o); if (o.k === 'param') return paramDialog(o); if (isFnObj(o) && !o.d.numeric && o.k !== 'data') return functionDialog(o); if (o.k === 'fdef') return functionDialog(obj(o.p[0])); }
+  if (o.t === 'value') { if (o.k === 'calc') return calcDialog(o); if (o.k === 'param') return paramDialog(o); if (isFnObj(o) && !o.d.numeric && o.k !== 'data' && o.k !== 'picfn') return functionDialog(o); if (o.k === 'fdef') return functionDialog(obj(o.p[0])); }
   if (o.t === 'fplot') return o.d.fn != null ? functionDialog(obj(o.d.fn)) : functionDialog(o);
   if (o.t === 'iter') return iterProps(o);
   toast('이 객체는 정의를 편집할 수 없습니다');
@@ -3448,7 +3450,7 @@ function runButtonExt(o) {
 /* ================= 속성 대화상자 추가 항목 ================= */
 function propsExtra(list, one, body) {
   const fns = [];
-  if (one && one.t === 'value' && !['param', 'func', 'deriv', 'data', 'fdef'].includes(one.k)) {
+  if (one && one.t === 'value' && !['param', 'func', 'deriv', 'data', 'picfn', 'fdef'].includes(one.k)) {
     body.append(el('div', { class: 'row2' }, field('표시 이름 (비우면 자동)', el('input', { id: 'px-nm', value: one.d.name || '' })), field('소수점 자리', el('select', { id: 'px-pr' }, el('option', { value: '' }, '환경설정 따름'), [0, 1, 2, 3, 4, 5, 6].map(n => el('option', { value: n, selected: one.prec === n }, n + '자리'))))));
     fns.push(() => { const v = $('#px-nm').value.trim(); if (v) one.d.name = v; else delete one.d.name; const p = $('#px-pr').value; if (p === '') delete one.prec; else one.prec = +p; });
   }
@@ -3810,7 +3812,7 @@ GSPI.build = (F, sec, links) => {
   const label = (src, o) => {
     const r = src.rec[2005]; if (!r || r.len < 24) return;
     const n = dv.getUint16(r.p + 22, true); if (!n) return;
-    const s = GSPI.sub(GSPI.dec(u8.slice(r.p + 24, r.p + 24 + n)).replace(/\0.*$/, ''));
+    const raw = GSPI.dec(u8.slice(r.p + 24, r.p + 24 + n)).replace(/\0.*$/, ''), s = /^\[[^\]]*\]$/.test(raw) ? raw : GSPI.sub(raw); // 이름 전체가 [1] 이면 아래 첨자가 아니라 그대로 (그림 이름)
     if (s) { o.label = s; o.showLabel = dv.getUint16(r.p + 2, true) === 1; const ty = dv.getUint16(r.p, true); o.ltype = ty; o._glo = ty === 7 ? { x: dv.getInt16(r.p + 6, true), y: dv.getInt16(r.p + 8, true) } : { x: 6, y: 6 }; } // 7: 레이블 왼쪽 위 = 점 + (dx, dy) / 6: GSP 가 자동으로 오른쪽 아래
   };
   const style = (src, o) => {
@@ -3843,7 +3845,7 @@ GSPI.build = (F, sec, links) => {
   const text = (src, s, sx, sy, extra = {}) => add({ t: 'text', k: 'cap', d: { text: s, sx, sy, size: 14, ...extra }, color: GSPI.color(...src.rgb) }).id;
   const valAt = (src, k, p, extra = {}) => { const id = mkValue(k, p, extra); const q = pos(src, 2307) || pos(src, 2311); if (q) Object.assign(obj(id).d, q);
     const r = src.rec[2307] || src.rec[2311]; // 표시 이름: 표시 문자열이 '<0>'(자동)이 아니면 그 글자가 측정값 이름
-    if (r && r.len >= 20 && k !== 'func' && k !== 'param') { const n = dv.getUint16(r.p + 16, true); if (n > 3 && 18 + n <= r.len) { try { const nm = GSPI.markup(u8, r.p + 18, r.p + 18 + n).trim(); if (nm) obj(id).d.name = nm; } catch (e) { } }
+    if (r && r.len >= 20 && k !== 'func' && k !== 'picfn' && k !== 'param') { const n = dv.getUint16(r.p + 16, true); if (n > 3 && 18 + n <= r.len) { try { const nm = GSPI.markup(u8, r.p + 18, r.p + 18 + n).trim(); if (nm) obj(id).d.name = nm; } catch (e) { } }
       else if (n === 3 && r.len >= 28 && dv.getUint16(r.p + 26, true) === 1) obj(id).d.vonly = true; // 방식 1: 값만 보임
       else if (n === 3 && r.len >= 28 && dv.getUint16(r.p + 26, true) === 3) { const l = src.rec[2005]; if (l && l.len >= 24) { const m = dv.getUint16(l.p + 22, true); const nm = GSPI.dec(u8.slice(l.p + 24, l.p + 24 + Math.min(m, l.len - 24))).replace(/\0.*$/, '').trim(); if (nm) obj(id).d.name = nm.replace(/\[(\d+)\]/g, (q, d) => [...d].map(c => String.fromCharCode(0x2080 + +c)).join('')); } } } // 방식 3: 이름표(2005)를 측정값 이름으로
     if (r && r.len >= 30 && k !== 'func' && dv.getUint16(r.p + 16, true) === 3) { const pr = dv.getUint16(r.p + 28, true); if (pr <= 8 && pr !== 2) obj(id).prec = pr; } // 소수 자리 (GSP 기본 2)
@@ -3877,7 +3879,7 @@ GSPI.build = (F, sec, links) => {
             const TL = W(tx, ty), TR = W(tx + a * pic.w, ty + c * pic.w), BL = W(tx + b * pic.h, ty + d * pic.h);
             if (Math.abs(b) < 1e-9 && Math.abs(c) < 1e-9 && Math.abs(a - d) < 1e-9 && a > 0) id = add({ t: 'picture', k: 'free', p: [], d: { src: pic.src, w: pic.w, h: pic.h, ww: TR.x - TL.x, x: TL.x, y: TL.y }, color: 'ink' }).id;
             else { const q = [TL, TR, BL].map(w => { const pid = P0(w); const po = obj(pid); po.hidden = true; po.showLabel = false; po.d.pich = true; return pid; }); id = add({ t: 'picture', k: 'pts', p: q, d: { src: pic.src, w: pic.w, h: pic.h }, color: 'ink' }).id; }
-            obj(id).hidden = !!(s.fl & 1); map[i] = id; return;
+            obj(id).hidden = !!(s.fl & 1); label(s, obj(id)); obj(id).showLabel = false; if (s.k !== 78) obj(id).d.gk = s.k; map[i] = id; return; // 그림 이름([1] 등)은 그림으로 정의한 함수의 표시에 쓴다
           }
           if (s.k === 4 || s.k === 41) { const r = s.rec[2201]; if (!r) break; const w = W(D(r, 0), D(r, 8)); id = P0(w); if (s.k === 41) { obj(id).isOrigin = true; pend.O = id; } break; }
           if (s.k === 39) { id = ensureCoord(); const c = obj(id); if (c) c.given = true; map[i] = id; return; } // 도구의 '좌표계' 주어진 것
@@ -3939,6 +3941,7 @@ GSPI.build = (F, sec, links) => {
         case 113: case 114: case 115: id = add({ t: 'amark', k: 'm', p: [P[0], P[1], P[2]], d: { n: s.code - 112 } }).id; break; // 각 표시 (호 1·2·3겹)
         case 24: { const r = s.rec[2003]; id = mkXf(P[0], { type: 'tr', distV: P[1], ang: D(r, 20) }); break; } // 측정한 거리만큼, 정한 각도로 평행이동
         case 29: id = mkXf(P[0], { type: 'rot', c: P[1], angV: P[2] }); break; // 측정한 각만큼 회전
+        case 122: { const pic = obj(P[0]), cs = obj(P[1]); if (!pic || pic.t !== 'picture' || !cs || cs.t !== 'coord') break; id = valAt(s, 'picfn', [P[0], P[1]], { form: 'yx', notation: 'f' }); { const ps = sec.objs[s.par[0]]; if (ps && ps.k === 78) obj(id).d.photo = true; } break; } // 그림으로 함수 정의 (GSP 는 사진(78)·그림(98)으로 부른다)
         case 119: { const m = obj(P[2]); if (!m || m.t !== 'amark') break; id = mkXf(P[0], { type: 'rot', c: P[1], angP: m.p.slice() }); break; } // 표시한 각(각 표시)만큼 회전
         case 120: { const m = obj(P[0]); if (!m || m.t !== 'amark') break; id = valAt(s, 'angle', m.p.slice()); obj(id).d.mark = P[0]; break; } // 각 표시의 크기
         case 31: id = mkXf(P[0], { type: 'dil', c: P[1], rS: [P[2], P[3]] }); break; // 두 선분의 비로 확대
@@ -4580,6 +4583,9 @@ function buildGSP() {
             const M = { ratio3: [47, 51], len: [36, 48], dist: [37, 48], angle: [41, 49], area: [42, 50], arclen: [44, 48], radius: [46, 48], x: [65, 51], y: [66, 51], slope: [87, 51], ptval: [94, 51] }[o.k];
             if (o.k === 'dist' && isStraight(obj(o.p[1]))) id = emit(38, 7, 48, par, o, valRec(o)); // 점과 직선류 사이의 거리
             else if (o.k === 'circum') id = emit(40, 7, 48, par, o, valRec(o)); // 원의 둘레
+            else if (o.k === 'picfn') { const pic = P1(o.p[0]), cs = P1(o.p[1]); if (!pic || !cs) throw 0; // 그림으로 함수 정의 (GSP 122)
+              const rec = new GSPX.B().bytes(GSPX.disp(o.d.sx || 10, o.d.sy || 10, 0, 2).get()).hex('07090000').u32(0x3c).u32(0x30).zeros(20).u32(1).u32(1).zeros(18).get();
+              id = emit(122, 11, 97, [pic, cs], o, [[2003, new GSPX.B().u32(122).u32(3).zeros(8).get()], [2311, rec], [2005, GSPX.label({ label: o.label || 'f', showLabel: false }, 6)], [2008, Uint8Array.of(3, 0)]]); }
             else if (o.k === 'ptval' && o.d.fx) { const pt = obj(o.p[0]), cs = doc.coordId && P1(doc.coordId); if (!pt || !cs) throw 0; let txt = ''; try { txt = valueText(o); } catch (e) { } id = emit(74, 0, 34, [P1(pt.id), cs], o, [[2300, GSPX.capRec(GSPX.markup(txt || 'x'), o.d.sx || 10, o.d.sy || 10)], [2008, Uint8Array.of(0, 0)]]); } // 함수 그래프 위 점의 x 값
             else if (M) { let p = par; if (o.k === 'ptval') { const pt = obj(o.p[0]); if (!pt || pt.k !== 'on') throw 0; p = [P1(pt.id), P1(pt.p[0])]; } if ((o.k === 'x' || o.k === 'y' || o.k === 'slope') && p.length === 1) { const cs = doc.coordId && P1(doc.coordId); if (!cs) throw 0; p = [p[0], cs]; } id = emit(M[0], 7, M[1], p, o, valRec(o)); }
             else if (o.k === 'coords') { let p = par.slice(0, 2); if (p.length === 1) { const cs = doc.coordId && P1(doc.coordId); if (!cs) throw 0; p = [p[0], cs]; } let txt = ''; try { txt = valueText(o); } catch (e) { } id = emit(49, 0, 34, p, o, [[2300, GSPX.capRec(GSPX.markup(txt || '( , )'), o.d.sx || 10, o.d.sy || 10)], [2008, Uint8Array.of(0, 0)]]); }
@@ -4599,7 +4605,7 @@ function buildGSP() {
               if (code === 99) rs.unshift([2003, new GSPX.B().u32(99).f64((o.d.ww || pb.w / PXCM) * PXCM / pb.w).f64((o.d.ww || pb.w / PXCM) * PXCM / pb.w).f64(0).get()]);
               id = emit(code, 16, 78, pins.map(P1), hdr, rs, { e: 0x121, pic: true });
             } else
-            id = emit(0, 16, 78, [], hdr, [[2316, new GSPX.B().u32(pb.w).u32(pb.h).u32(pb.w).u32(pb.h).get()], [2216, new GSPX.B().f64((x1 - x0) / pb.w).f64((x2 - x0) / pb.h).f64(x0).f64((y1 - y0) / pb.w).f64((y2 - y0) / pb.h).f64(y0).get()], [8004, new GSPX.B().u16(k).get()]], { e: 0x121, pic: true });
+            id = emit(0, 16, o.d.gk === 98 ? 98 : 78, [], hdr, [[2316, new GSPX.B().u32(pb.w).u32(pb.h).u32(pb.w).u32(pb.h).get()], [2216, new GSPX.B().f64((x1 - x0) / pb.w).f64((x2 - x0) / pb.h).f64(x0).f64((y1 - y0) / pb.w).f64((y2 - y0) / pb.h).f64(y0).get()], [8004, new GSPX.B().u16(k).get()], ...(o.label ? [[2005, GSPX.label({ label: o.label, showLabel: false }, 6)]] : [])], { e: 0x121, pic: true }); // 98: GSP 가 「그림」으로, 78: 「사진」으로 부르는 그림
           } else if (id == null && o.t === 'text') {
             const txt = String(o.d.text || '').replace(/\{#\d+\}/g, '');
             const mk = GSPX.markup(txt, o.d.wrap || (txt.includes('\n') ? 1e9 : 640)); const sx = o.d.sx || 10, sy = o.d.sy || 10;
@@ -4756,6 +4762,51 @@ function dataFn(xs, ys, smooth) {
 }
 
 /* ================= 사진(그림)에서 함수 정의 ================= */
+// GSP 「그림으로 함수 정의」: f(x) = x 위에서 그림의 가장 높은 점의 y. 그림·좌표계를 부모로 두어 그림을 옮기거나 늘이면 함수도 바뀐다.
+// 투명한 바탕의 그림은 불투명한 픽셀, 바탕이 모두 불투명한 그림(사진 등)은 어두운 픽셀을 그림으로 본다.
+const picMaskCache = new Map();
+function picMask(src) {
+  const c0 = picMaskCache.get(src); if (c0) return c0;
+  const im = imgOf(src);
+  if (!im.complete || !im.naturalWidth) { if (!im._pfWait) { im._pfWait = true; im.addEventListener('load', () => { recompute(); requestDraw(); }); } return null; }
+  const w = im.naturalWidth, h = im.naturalHeight, k = Math.min(1, 1200 / Math.max(w, h)), cw = Math.max(1, Math.round(w * k)), ch = Math.max(1, Math.round(h * k));
+  const c = document.createElement('canvas'); c.width = cw; c.height = ch; const x2 = c.getContext('2d'); x2.drawImage(im, 0, 0, cw, ch);
+  let data = null; try { data = x2.getImageData(0, 0, cw, ch).data; } catch (e) { }
+  const m = { cw, ch, op: null, top: null, bot: null };
+  if (data) {
+    let clear = false; for (let q = 3; q < data.length; q += 4) if (data[q] < 128) { clear = true; break; }
+    const op = new Uint8Array(cw * ch), top = new Int32Array(cw).fill(-1), bot = new Int32Array(cw).fill(-1);
+    for (let j = 0; j < ch; j++) for (let i = 0; i < cw; i++) { const q = (j * cw + i) * 4; const on = clear ? data[q + 3] >= 128 : data[q + 3] >= 128 && 0.299 * data[q] + 0.587 * data[q + 1] + 0.114 * data[q + 2] < 140; if (on) { op[j * cw + i] = 1; if (top[i] < 0) top[i] = j; bot[i] = j; } }
+    Object.assign(m, { op, top, bot });
+  }
+  picMaskCache.set(src, m); return m;
+}
+function picTopFn(pg, co) {
+  const e1 = vsub(pg.TR, pg.TL), e2 = vsub(pg.BL, pg.TL), det = e1.x * e2.y - e1.y * e2.x;
+  return x => {
+    const m = picMask(pg.src); if (!m || !m.op || Math.abs(det) < 1e-12) return NaN;
+    const X = co.o.x + x * co.ux;
+    if (Math.abs(e1.y) < 1e-9 && Math.abs(e2.x) < 1e-9) { // 기울지 않은 그림: 열마다 미리 구한 맨 위·맨 아래
+      const u = (X - pg.TL.x) / e1.x; if (!(u >= 0 && u < 1)) return NaN;
+      const topIsHigh = (e2.y < 0) === (co.uy > 0), row = c => { const r = topIsHigh ? m.top[c] : m.bot[c]; return r < 0 ? NaN : (topIsHigh ? r : r + 1); };
+      const q = u * m.cw - 0.5, c0 = Math.max(0, Math.floor(q)), c1 = Math.min(m.cw - 1, c0 + 1), f = Math.max(0, Math.min(1, q - c0)); // 이웃한 두 열의 가운데 사이는 직선으로 (GSP 와 같게)
+      const r0 = row(c0), r1 = row(c1), r = isFinite(r0) && isFinite(r1) ? r0 + (r1 - r0) * f : isFinite(r0) ? r0 : r1; if (!isFinite(r)) return NaN;
+      const Y = pg.TL.y + r / m.ch * e2.y; return (Y - co.o.y) / co.uy;
+    }
+    const ys = [pg.TL.y, pg.TR.y, pg.BL.y, pg.TR.y + e2.y]; let y0 = Math.max(...ys), y1 = Math.min(...ys); if (co.uy < 0) [y0, y1] = [y1, y0];
+    const N = 2 * Math.max(m.cw, m.ch);
+    for (let i = 0; i <= N; i++) { // 돌린 그림: 높은 쪽부터 내려가며 처음 만나는 픽셀
+      const Y = y0 + (y1 - y0) * i / N, dx = X - pg.TL.x, dy = Y - pg.TL.y, u = (dx * e2.y - dy * e2.x) / det, v = (e1.x * dy - e1.y * dx) / det;
+      if (u < 0 || u >= 1 || v < 0 || v >= 1) continue; if (m.op[Math.floor(v * m.ch) * m.cw + Math.floor(u * m.cw)]) return (Y - co.o.y) / co.uy;
+    }
+    return NaN;
+  };
+}
+function functionFromPictureLive() {
+  const pic = S().os.find(o => o.t === 'picture'); if (!pic || !G[pic.id]) return;
+  snap(); const cid = ensureCoord(); const id = mkValue('picfn', [pic.id, cid], { form: 'yx', notation: 'f' }); recompute(); setSel([id]);
+  toast(picMask(G[pic.id].src) ? '그림의 가장 높은 점으로 함수를 정의했습니다 (그림을 옮기면 함수도 바뀝니다)' : '그림을 불러오면 함수가 정해집니다');
+}
 function functionFromPicture() {
   const pic = S().os.find(o => o.t === 'picture'), g = G[pic.id]; const im = imgOf(g.src);
   if (!im.complete || !im.naturalWidth) return toast('그림을 불러오는 중입니다. 잠시 뒤 다시 해 보세요');

@@ -146,7 +146,7 @@ function runButtonExt(o) {
 /* ================= 속성 대화상자 추가 항목 ================= */
 function propsExtra(list, one, body) {
   const fns = [];
-  if (one && one.t === 'value' && !['param', 'func', 'deriv', 'data', 'fdef'].includes(one.k)) {
+  if (one && one.t === 'value' && !['param', 'func', 'deriv', 'data', 'picfn', 'fdef'].includes(one.k)) {
     body.append(el('div', { class: 'row2' }, field('표시 이름 (비우면 자동)', el('input', { id: 'px-nm', value: one.d.name || '' })), field('소수점 자리', el('select', { id: 'px-pr' }, el('option', { value: '' }, '환경설정 따름'), [0, 1, 2, 3, 4, 5, 6].map(n => el('option', { value: n, selected: one.prec === n }, n + '자리'))))));
     fns.push(() => { const v = $('#px-nm').value.trim(); if (v) one.d.name = v; else delete one.d.name; const p = $('#px-pr').value; if (p === '') delete one.prec; else one.prec = +p; });
   }

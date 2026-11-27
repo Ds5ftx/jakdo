@@ -3,7 +3,7 @@
 const cToW = (co, x, y) => ({ x: co.o.x + x * co.ux, y: co.o.y + y * co.uy });
 const wToC = (co, p) => ({ x: (p.x - co.o.x) / co.ux, y: (p.y - co.o.y) / co.uy });
 function coordOf(o) { const last = o.p[o.p.length - 1]; const lo = obj(last); return lo && lo.t === 'coord' ? last : doc.coordId; }
-const isFnObj = o => !!o && (o.t === 'fplot' || (o.t === 'value' && ['func', 'deriv', 'data'].includes(o.k)));
+const isFnObj = o => !!o && (o.t === 'fplot' || (o.t === 'value' && ['func', 'deriv', 'data', 'picfn'].includes(o.k)));
 const FORM_VAR = { yx: 'x', xy: 'y', rt: 'θ' };
 
 /* ================= 함수 그래프 매개화 ================= */
@@ -45,6 +45,7 @@ function compileFn(id, Gx) { const g = Gx[id]; return g && g.f ? g.f : (() => Na
 
 /* ================= 함수 값 객체 (새 함수 / 도함수) ================= */
 function computeFunc(o, Gx) {
+  if (o.k === 'picfn') { const pg = Gx[o.p[0]], co = Gx[o.p[1]]; if (!pg || !pg.TL || !co || co.form === 'polar') return null; return { v: NaN, u: 'none', isFn: true, f: picTopFn(pg, co) }; } // 그림으로 정의한 함수 (GSP 122)
   if (o.k === 'data') {
     const f = dataFn(o.d.xs, o.d.ys, !!o.d.smooth);
     return { v: NaN, u: 'none', f, isFn: true };
@@ -57,6 +58,7 @@ function computeFunc(o, Gx) {
 function funcText(o) {
   const v = FORM_VAR[o.d.form || 'yx'];
   if (o.k === 'data') return disp(o.label) + '(' + v + ') : 그림에서 정의된 함수';
+  if (o.k === 'picfn') { const pic = obj(o.p[0]); return disp(o.label) + '(' + v + ') : ' + (o.d.photo ? '사진' : '그림') + (pic && pic.label ? ' ' + (/^\[[^\]]*\]$/.test(pic.label) ? pic.label : disp(pic.label)) : ''); }
   if (o.k === 'deriv' && o.d.numeric) return disp(o.label) + '(' + v + ') ≈ ' + disp(obj(o.p[0]) ? obj(o.p[0]).label : '?') + '의 도함수';
   let body = storedToDisplay(o.d.expr); if (v !== 'x') body = body.replace(/\bx\b/g, v);
   const lhs = o.d.notation === 'y' ? (o.d.form === 'xy' ? 'x' : o.d.form === 'rt' ? 'r' : 'y') : disp(o.label) + '(' + v + ')';
@@ -68,7 +70,7 @@ function expandCalls(a, depth = 0) {
   if (!Array.isArray(a)) return a;
   if (a[0] === 'call') {
     const fo = obj(a[1]); const arg = expandCalls(a[2], depth);
-    if (!fo || depth > 8 || fo.k === 'data' || (fo.k === 'deriv' && fo.d.numeric)) throw new Error('nosym');
+    if (!fo || depth > 8 || fo.k === 'data' || fo.k === 'picfn' || (fo.k === 'deriv' && fo.d.numeric)) throw new Error('nosym');
     const src = fo.t === 'fplot' ? fo.d.expr : fo.d.expr; const body = parseExpr(src, id => id === 'x' ? ['x'] : null);
     return substX(expandCalls(body, depth + 1), arg);
   }

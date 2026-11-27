@@ -169,7 +169,7 @@ function mergeOnPath(pt, path) { snap(); const g = G[path.id]; pt.k = 'on'; pt.p
 /* ================= 정의 편집 / 앞뒤 ================= */
 function editDefinition() {
   const o = S().os[0]; if (!o) return;
-  if (o.t === 'value') { if (o.k === 'calc') return calcDialog(o); if (o.k === 'param') return paramDialog(o); if (isFnObj(o) && !o.d.numeric && o.k !== 'data') return functionDialog(o); if (o.k === 'fdef') return functionDialog(obj(o.p[0])); }
+  if (o.t === 'value') { if (o.k === 'calc') return calcDialog(o); if (o.k === 'param') return paramDialog(o); if (isFnObj(o) && !o.d.numeric && o.k !== 'data' && o.k !== 'picfn') return functionDialog(o); if (o.k === 'fdef') return functionDialog(obj(o.p[0])); }
   if (o.t === 'fplot') return o.d.fn != null ? functionDialog(obj(o.d.fn)) : functionDialog(o);
   if (o.t === 'iter') return iterProps(o);
   toast('이 객체는 정의를 편집할 수 없습니다');
