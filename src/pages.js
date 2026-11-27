@@ -23,7 +23,7 @@ function addPage(name, d, v, at) {
   stashPage();
   const pg = { id: book.nextPid++, name: pageName(name || nextPageName()), doc: normDoc(d), view: v ? { ...v } : defaultView() };
   const idx = at == null ? book.pages.length : at;
-  book.pages.splice(idx, 0, pg); if (idx <= book.cur && book.pages.length > 1 && at != null) book.cur++;
+  book.pages.splice(idx, 0, pg); if (idx <= book.cur && book.pages.length > 1 && at != null) book.cur++; if (typeof markEdited === 'function') markEdited();
   showPage(idx, { noStash: true }); return pg;
 }
 function duplicatePage(i) {
@@ -36,7 +36,7 @@ function deletePage(i) {
   const pg = book.pages[i];
   openDlg('페이지 삭제', el('p', { class: 'note', style: 'font-size:14px' }, `‘${pg.name}’ 페이지와 그 안의 작도를 모두 지웁니다. 이 작업은 되돌릴 수 없습니다.`),
     [{ label: '취소' }, { label: '삭제', primary: true, run: () => {
-      stashPage(); book.pages.splice(i, 1);
+      stashPage(); book.pages.splice(i, 1); markEdited();
       const next = i < book.cur ? book.cur - 1 : i === book.cur ? Math.min(i, book.pages.length - 1) : book.cur;
       book.cur = -1; showPage(next, { noStash: true }); toast('‘' + pg.name + '’ 페이지를 삭제했습니다');
     } }]);
@@ -44,14 +44,14 @@ function deletePage(i) {
 function movePage(i, j) {
   if (j < 0 || j >= book.pages.length || i === j) return;
   stashPage(); const cur = curPage(); const [pg] = book.pages.splice(i, 1); book.pages.splice(j, 0, pg);
-  book.cur = book.pages.indexOf(cur); renderTabs(); scheduleSave();
+  book.cur = book.pages.indexOf(cur); renderTabs(); markEdited(); scheduleSave();
 }
 function renamePage(i, tabEl) {
   const pg = book.pages[i]; const span = tabEl.querySelector('span');
   const inp = el('input', { class: 'ptab-edit', value: pg.name, 'aria-label': '페이지 이름' });
   span.replaceWith(inp); inp.focus(); inp.select();
   let done = false;
-  const fin = ok => { if (done) return; done = true; const v = inp.value.trim(); if (ok && v && v !== pg.name) { pg.name = book.pages.some(p => p !== pg && p.name === v) ? pageName(v) : v; scheduleSave(); } renderTabs(); };
+  const fin = ok => { if (done) return; done = true; const v = inp.value.trim(); if (ok && v && v !== pg.name) { pg.name = book.pages.some(p => p !== pg && p.name === v) ? pageName(v) : v; markEdited(); scheduleSave(); } renderTabs(); };
   inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') fin(true); if (e.key === 'Escape') fin(false); });
   inp.addEventListener('blur', () => fin(true));
   inp.addEventListener('pointerdown', e => e.stopPropagation());
@@ -117,12 +117,12 @@ function replaceBook(b) {
 function appendBook(b) {
   stashPage(); const first = book.pages.length;
   for (const p of b.pages) book.pages.push({ id: book.nextPid++, name: pageName(p.name), autoName: p.autoName, doc: p.doc, view: p.view && p.view.s ? p.view : defaultView() });
-  showPage(first, { noStash: true });
+  showPage(first, { noStash: true }); if (typeof markEdited === 'function') markEdited();
   return b.pages.length;
 }
 function newDocument() {
   openDlg('새 문서', el('p', { class: 'note', style: 'font-size:14px' }, `열려 있는 페이지 ${book.pages.length}개를 모두 닫고 빈 문서로 시작합니다. 필요하면 먼저 파일로 저장하거나 보관함에 보관하세요.`),
-    [{ label: '취소' }, { label: '새 문서', primary: true, run: () => { replaceBook({ cur: 0, pages: [{ name: '페이지 1', doc: newDoc() }] }); toast('새 문서를 시작했습니다'); } }]);
+    [{ label: '취소' }, { label: '새 문서', primary: true, run: () => { replaceBook({ cur: 0, pages: [{ name: '페이지 1', doc: newDoc() }] }); undoStack.length = 0; redoStack.length = 0; editVer = 0; fileSaved(null); toast('새 문서를 시작했습니다'); } }]);
 }
 function linkTargets() { return book.pages.filter((p, i) => i !== book.cur); }
 function makeLinkButton(pid) {

@@ -14,10 +14,10 @@ function toast(msg, ms = 2200) { const t = $('#toast'); t.textContent = msg; t.h
 
 /* ================= 실행 취소 ================= */
 let undoStack = [], redoStack = [];
-function snap() { undoStack.push(serialize()); if (undoStack.length > 300) undoStack.shift(); redoStack.length = 0; scheduleSave(); }
+function snap() { undoStack.push(serialize()); if (undoStack.length > 300) undoStack.shift(); redoStack.length = 0; markEdited(); scheduleSave(); }
 function restore(s) { const keepSel = sel.slice(); loadDocJSON(s); sel = keepSel.filter(id => byId.has(id)); for (const id of [...anims.keys()]) if (!byId.has(id)) anims.delete(id); for (const id of [...traces.keys()]) if (!byId.has(id)) traces.delete(id); refresh(); }
-function undo() { if (!undoStack.length) return toast('되돌릴 작업이 없습니다'); redoStack.push(serialize()); restore(undoStack.pop()); scheduleSave(); }
-function redo() { if (!redoStack.length) return toast('다시 실행할 작업이 없습니다'); undoStack.push(serialize()); restore(redoStack.pop()); scheduleSave(); }
+function undo() { if (!undoStack.length) return toast('되돌릴 작업이 없습니다'); redoStack.push(serialize()); restore(undoStack.pop()); markEdited(); scheduleSave(); }
+function redo() { if (!redoStack.length) return toast('다시 실행할 작업이 없습니다'); undoStack.push(serialize()); restore(redoStack.pop()); markEdited(); scheduleSave(); }
 let saveTimer = null;
 function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { localStorage.setItem(STORE_KEY, serializeBook()); } catch (e) { } }, 600); }
 function refresh() { dirty = true; requestDraw(); updateStatus(); }
@@ -719,8 +719,83 @@ async function saveFile(filename, data, mime) {
   catch (e) { toast('이 화면에서는 파일 저장을 할 수 없습니다. 보관함을 이용하세요.'); return false; }
 }
 function stamp() { const d = new Date(), z = n => String(n).padStart(2, '0'); return d.getFullYear() + z(d.getMonth() + 1) + z(d.getDate()); }
-function fileSave() { saveFile('작도-' + stamp() + '.json', serializeBook(), 'application/json'); }
-function fileOpen() { const inp = el('input', { type: 'file', accept: '.json,.gsp,.htm,.html,application/json' }); inp.onchange = () => { const f = inp.files[0]; if (!f) return; if (!/\.json$/i.test(f.name) && typeof readDropped === 'function') return readDropped(f); const r = new FileReader(); r.onload = () => { try { const n = appendBook(parseBook(r.result)); toast('‘' + f.name + '’의 페이지 ' + n + '개를 열었습니다'); } catch (e) { toast('파일을 열 수 없습니다: ' + e.message); } }; r.readAsText(f); }; inp.click(); }
+/* ================= 연 파일: 「열기」 창 · 저장(연 파일에 덮어쓰기) · 다른 이름으로 저장 ================= */
+// GSP 와 같은 흐름: 연 파일(또는 처음 저장한 파일)을 기억해 두고, Ctrl+S 는 그 파일에 그 형식(.json · .gsp)으로 바로 덮어쓴다.
+var curFile = null; // { handle, name, kind: 'json' | 'gsp', lossOk }
+var editVer = 0, savedVer = 0; // 고친 횟수, 마지막으로 열거나 저장했을 때의 횟수
+function markEdited() { editVer++; updateTitle(); }
+function isModified() { return editVer !== savedVer; }
+function updateTitle() { const n = curFile ? curFile.name : ''; try { document.title = (n && isModified() ? '* ' : '') + (n ? n + ' — ' : '') + '기하 작도판'; } catch (e) { } }
+function bookIsBlank() { return book.pages.every((p, i) => !((i === book.cur ? doc : p.doc).objs || []).length); }
+function lossNote(out) { const r = out && out.r; return r ? (r.fixed ? ` · 점 ${r.fixed}개는 고정된 점으로` : '') + (r.skipped ? ` · GSP에 없는 객체 ${r.skipped}개는 뺐습니다` : '') : ''; }
+function buildFileData(kind) {
+  if (kind === 'gsp') { let r; try { r = buildGSP(); } catch (e) { toast('GSP 문서로 저장하지 못했습니다: ' + e.message); return null; } return { blob: new Blob([r.bytes], { type: 'application/octet-stream' }), r }; }
+  return { blob: new Blob([serializeBook()], { type: 'application/json' }) };
+}
+function fileSaved(f) { curFile = f; savedVer = editVer; updateTitle(); scheduleSave(); }
+const FILE_TYPES = { json: { description: '작도 파일 (.json)', accept: { 'application/json': ['.json'] } }, gsp: { description: 'GSP 5 스케치 (.gsp)', accept: { 'application/octet-stream': ['.gsp'] } } };
+async function fileOpen() {
+  let file = null, handle = null;
+  if (window.showOpenFilePicker) { // Chrome·Edge: 「열기」 창. 고른 파일을 기억해 두었다가 Ctrl+S 로 덮어쓴다
+    try { [handle] = await window.showOpenFilePicker({ id: 'webgsp-open', multiple: false, types: [{ description: '작도 파일 · GSP 스케치 · 웹 페이지', accept: { 'application/json': ['.json'], 'application/octet-stream': ['.gsp'], 'text/html': ['.htm', '.html'] } }] }); file = await handle.getFile(); }
+    catch (e) { if (e && e.name === 'AbortError') return; handle = null; file = null; } // 창을 쓸 수 없으면(보안 제한 등) 아래의 파일 고르기로
+  }
+  if (!file) { file = await new Promise(res => { const inp = el('input', { type: 'file', accept: '.json,.gsp,.htm,.html,application/json' }); inp.onchange = () => res(inp.files[0] || null); inp.click(); }); if (!file) return; }
+  const go = mode => openFileAs(file, handle, mode);
+  if (bookIsBlank() || (curFile && !isModified())) return go('replace');
+  openDlg('열기', el('p', { class: 'note', style: 'font-size:14px' }, (curFile && isModified() ? `‘${curFile.name}’에 저장하지 않은 변경이 있습니다. ` : `지금 열려 있는 페이지 ${book.pages.length}개는 파일로 저장되지 않았을 수 있습니다. `) + `‘${file.name}’을(를) 어떻게 열까요?`),
+    [{ label: '취소' }, { label: '페이지로 덧붙이기', run: () => go('append') }, { label: '이 파일로 바꾸어 열기', primary: true, run: () => go('replace') }]);
+}
+async function openFileAs(file, handle, mode) {
+  const kind = /\.gsp$/i.test(file.name) ? 'gsp' : /\.json$/i.test(file.name) ? 'json' : 'other', replace = mode === 'replace';
+  try {
+    if (kind === 'gsp') { if (!(await importGSPFile(file, { replace }))) return; }
+    else {
+      const txt = await file.text(); let b = null;
+      if (kind === 'json') b = parseBook(txt);
+      else { const m = txt.match(/<script type="application\/json" id="jakdo-embed">([\s\S]*?)<\/script>/); if (m) b = parseBook(m[1]); else if (typeof importJSP === 'function' && /PARAM\s+NAME\s*=\s*"?Construction/i.test(txt)) { importJSP(txt, file.name); markEdited(); return; } else return toast('이 파일 형식은 열 수 없습니다'); }
+      if (replace) replaceBook(b); else appendBook(b);
+      toast(`‘${file.name}’` + (replace ? '을(를) 열었습니다' : `에서 페이지 ${b.pages.length}개를 덧붙였습니다`));
+    }
+  } catch (e) { return toast('파일을 열 수 없습니다: ' + e.message); }
+  if (replace) { undoStack.length = 0; redoStack.length = 0; editVer = 0; fileSaved(kind === 'other' ? null : { handle, name: file.name, kind }); }
+  else markEdited();
+}
+async function fileSave() { // Ctrl+S: 연 파일에 그대로 덮어쓰기, 연 파일이 없으면 「다른 이름으로 저장」
+  const f = curFile;
+  if (f && f.handle) {
+    const out = buildFileData(f.kind); if (!out) return false;
+    if (f.kind === 'gsp' && out.r && (out.r.skipped || out.r.fixed) && !f.lossOk) {
+      openDlg('저장', el('p', { class: 'note', style: 'font-size:14px' }, `‘${f.name}’에 덮어씁니다. GSP 형식으로 옮길 수 없어서` + lossNote(out).replace(/^ · /, ' ') + '. 계속할까요? (원본을 남기려면 「다른 이름으로 저장」을 쓰세요)'),
+        [{ label: '취소' }, { label: '다른 이름으로 저장…', run: () => fileSaveAs('gsp') }, { label: '덮어쓰기', primary: true, run: () => { f.lossOk = true; fileSave(); } }]);
+      return false;
+    }
+    try {
+      if (f.handle.queryPermission && (await f.handle.queryPermission({ mode: 'readwrite' })) !== 'granted' && (await f.handle.requestPermission({ mode: 'readwrite' })) !== 'granted') throw new Error('쓰기 권한이 없습니다');
+      const w = await f.handle.createWritable(); await w.write(out.blob); await w.close();
+      fileSaved(f); toast('저장했습니다: ' + f.name + lossNote(out)); return true;
+    } catch (e) { if (e && e.name === 'AbortError') return false; toast(`‘${f.name}’에 저장하지 못했습니다 (${e && e.message || e}). 다른 이름으로 저장합니다`); }
+  }
+  return fileSaveAs(f ? f.kind : 'json');
+}
+async function fileSaveAs(kind) { // 「다른 이름으로 저장」: 형식은 창에서 고른 확장자(.json · .gsp)로 정한다
+  kind = kind || (curFile ? curFile.kind : 'json');
+  const base = (curFile ? curFile.name.replace(/\.(json|gsp)$/i, '') : (book.pages[0] && book.pages[0].name) || '작도-' + stamp()).replace(/[\\/:*?"<>|]/g, '') || '작도';
+  if (window.showSaveFilePicker) {
+    let h = null;
+    try { h = await window.showSaveFilePicker({ suggestedName: base + '.' + kind, id: 'webgsp-save', types: kind === 'gsp' ? [FILE_TYPES.gsp, FILE_TYPES.json] : [FILE_TYPES.json, FILE_TYPES.gsp] }); }
+    catch (e) { if (e && e.name === 'AbortError') return false; h = null; }
+    if (h) {
+      const k2 = /\.gsp$/i.test(h.name) ? 'gsp' : 'json', out = buildFileData(k2); if (!out) return false;
+      try { const w = await h.createWritable(); await w.write(out.blob); await w.close(); } catch (e) { toast('저장하지 못했습니다: ' + (e && e.message || e)); return false; }
+      fileSaved({ handle: h, name: h.name, kind: k2, lossOk: true }); toast('저장했습니다: ' + h.name + lossNote(out)); return true;
+    }
+  }
+  const out = buildFileData(kind); if (!out) return false; // 창을 쓸 수 없는 브라우저: 내려받기로
+  if (!(await saveFile(base + '.' + kind, out.blob, out.blob.type))) return false;
+  fileSaved({ handle: null, name: base + '.' + kind, kind }); if (out.r) toast('저장했습니다' + lossNote(out)); return true;
+}
+window.addEventListener('beforeunload', e => { if (curFile && isModified()) { e.preventDefault(); e.returnValue = ''; } }); // 연 파일에 저장하지 않은 변경이 있으면 닫기 전에 묻는다
 function exportPNG() { if (doc.prefs.exportFormat === 'svg') return exportSVG(); exportPNGScaled(); }
 function archiveList() { try { return JSON.parse(localStorage.getItem('jakdo-archive') || '[]'); } catch (e) { return []; } }
 function archiveSet(a) { try { localStorage.setItem('jakdo-archive', JSON.stringify(a)); return true; } catch (e) { toast('브라우저 저장소를 사용할 수 없습니다'); return false; } }
@@ -731,7 +806,7 @@ document.addEventListener('keydown', e => {
   const k = e.key, mod_ = e.ctrlKey || e.metaKey;
   if (k === ' ') { spaceDown = true; return; }
   if (mod_) {
-    const map = { z: e.shiftKey ? redo : undo, y: redo, a: selectAll, c: copySel, v: paste, x: () => { copySel(); deleteSel(); }, l: () => can.straight() && C.straight('segment'), m: () => can.midpoint() && C.midpoint(), i: () => can.intersect() && C.intersect(), p: () => can.polyInt() && C.polyInt(), k: toggleLabels, h: hideSel, t: toggleTrace, b: eraseTraces, s: fileSave, o: fileOpen, '=': () => calcDialog(), '+': () => calcDialog(), e: () => exportPNG() };
+    const map = { z: e.shiftKey ? redo : undo, y: redo, a: selectAll, c: copySel, v: paste, x: () => { copySel(); deleteSel(); }, l: () => can.straight() && C.straight('segment'), m: () => can.midpoint() && C.midpoint(), i: () => can.intersect() && C.intersect(), p: () => can.polyInt() && C.polyInt(), k: toggleLabels, h: hideSel, t: toggleTrace, b: eraseTraces, s: e.shiftKey ? () => fileSaveAs() : fileSave, o: fileOpen, '=': () => calcDialog(), '+': () => calcDialog(), e: () => exportPNG() };
     const f = map[k.toLowerCase()]; if (f) { e.preventDefault(); f(); }
     return;
   }

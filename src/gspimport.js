@@ -410,7 +410,7 @@ GSPI.fixInts = () => {
 };
 function P0(w) { return P(w.x, w.y); }
 
-async function importGSPFile(file) {
+async function importGSPFile(file, opts = {}) { // opts.replace: 지금 문서를 이 파일로 바꾼다 (열기), 아니면 페이지로 덧붙인다 (끌어 놓기)
   let F;
   try { F = GSPI.parse(await file.arrayBuffer()); } catch (e) { return toast('GSP 파일을 열 수 없습니다: ' + e.message); }
   const pages = [], tools = []; let skipped = 0;
@@ -432,11 +432,12 @@ async function importGSPFile(file) {
   } finally { doc = keep.doc; sel = keep.sel; reindex(); }
   if (!pages.length) pages.push({ name: file.name.replace(/\.gsp$/i, ''), doc: newDoc(), view: { ox: 0, oy: 0, s: PXCM } });
   if (tools.length) pages[0].doc.tools = (pages[0].doc.tools || []).concat(tools);
-  const first = book.pages.length;
-  appendBook({ pages });
+  const first = opts.replace ? 0 : book.pages.length;
+  if (opts.replace) replaceBook({ pages }); else appendBook({ pages });
   links.forEach((L, pi) => { const pdoc = book.pages[first + pi].doc; L.forEach(({ id, page }) => { const b = pdoc.objs.find(o => o.id === id); const tgt = book.pages[first + page]; if (b && tgt) b.d.pid = tgt.id; }); });
   recompute(); refresh(); scheduleSave();
   toast(`‘${file.name}’에서 페이지 ${pages.length}개` + (tools.length ? `, 사용자 도구 ${tools.length}개(첫 페이지)` : '') + '를 열었습니다' + (skipped ? ` · 지원하지 않는 객체 ${skipped}개는 건너뛰었습니다` : ''));
+  return pages.length;
 }
 
 /* ================= JavaSketchpad(HTML) ================= */
