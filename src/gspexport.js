@@ -63,7 +63,7 @@ GSPX.B = class { // 작은 바이트 버퍼
   get() { return Uint8Array.from(this.a); }
 };
 GSPX.utf8 = s => new TextEncoder().encode(s);
-GSPX.rgb = c => { const h = c === 'ink' || !c ? '#000000' : col(c); const m = /^#([0-9a-f]{6})/i.exec(h); const v = m ? m[1] : '000000'; return [0, 2, 4].map(i => parseInt(v.substr(i, 2), 16)); };
+GSPX.rgb = c => { if (c === 'red') return [255, 0, 0]; if (c === 'blue') return [0, 0, 255]; /* 불러올 때 GSP 의 순빨강·순파랑을 이름 색으로 바꾸므로 되돌린다 */ const h = c === 'ink' || !c ? '#000000' : col(c); const m = /^#([0-9a-f]{6})/i.exec(h); const v = m ? m[1] : '000000'; return [0, 2, 4].map(i => parseInt(v.substr(i, 2), 16)); };
 /* 객체 종류 → GSP 의 (분류 c, 종류 k) */
 GSPX.CK = { point: [1, 4], segment: [2, 14], line: [2, 12], ray: [2, 13], circle: [3, 28], arc: [12, 67], cinterior: [5, 16], sector: [13, 68], arcseg: [13, 69] };
 GSPX.polyK = n => n >= 3 && n <= 6 ? 49 + n : 15;
@@ -98,7 +98,7 @@ GSPX.tokens = (expr) => {
   return { toks, refs };
 };
 /* 측정값·계산이 공통으로 쓰는 32바이트 표시 머리 */
-GSPX.disp = (sx, sy, mode = 0) => new GSPX.B().hex('fc080000').u32(0x16).u32(4).i16(sx).i16(sy).hex('03003c303e0000000600').u16(mode).hex('0200').u16(0);
+GSPX.disp = (sx, sy, mode = 0, prec = 2) => new GSPX.B().hex('fc080000').u32(0x16).u32(4).i16(sx).i16(sy).hex('03003c303e0000000600').u16(mode).u16(Math.max(0, Math.min(8, prec | 0))).u16(0); // 방식, 소수 자리
 GSPX.valLabel = name => { const u = GSPX.utf8(GSPX.glabel(String(name).trim())); const b = new GSPX.B().u16(7).u16(0).u16(1).i16(8).i16(5).u16(0).u16(0).hex('986e12c1515c6141').u16(u.length).bytes(u).u8(0); if (b.a.length % 2) b.u8(0); return b.get(); };
 GSPX.glabel = s => String(s).replace(/[₀-₉]+/g, m => '[' + [...m].map(c => c.charCodeAt(0) - 0x2080).join('') + ']').replace(/′/g, "'").replace(/″/g, "''");
 GSPX.rect = o => { const x = o.d.sx || 10, y = o.d.sy || 10; return new GSPX.B().i16(x).i16(y).i16(x + 120).i16(y + 24).get(); };
@@ -113,10 +113,29 @@ GSPX.markup = (text, maxw = 640) => {
   const wrap = ln => { const out = []; let cur = '', w = 0; for (const word of ln.split(/(?<=\s)/)) { const ww = [...word.replace(/\*\*/g, '')].reduce((a, c) => a + cw(c), 0); if (cur && w + ww > maxw) { out.push(cur); cur = ''; w = 0; } cur += word; w += ww; } out.push(cur); return out; };
   const enc = s => { const u = GSPX.utf8(s); return [...GSPX.utf8('<T' + u.length.toString(16).toUpperCase() + 'x'), ...u, 62]; };
   const out = [...GSPX.utf8('<VL')]; let bold = false;
-  const line = p => { const segs = p.split('**'); if (segs.length === 1 && !bold) { out.push(...enc(p)); return; }
+  const line = p => { if (/\\frac\{|[\^_]\{|√\{/.test(p) && !p.includes('**')) { out.push(...GSPX.mathLine(p, enc)); return; } // 수식 표기가 있는 줄: GSP 수식 구조로
+    const segs = p.split('**'); if (segs.length === 1 && !bold) { out.push(...enc(p)); return; }
     out.push(...GSPX.utf8('<H')); segs.forEach((sg, k) => { if (k) bold = !bold; if (!sg) return; if (bold) out.push(...GSPX.utf8('<SW2'), ...enc(sg), 62); else out.push(...enc(sg)); }); out.push(62); };
-  String(text || '').replace(/\r/g, '').split('\n').forEach(ln => { if (!ln) { out.push(...GSPX.utf8('<0>')); return; } wrap(ln).forEach(line); });
+  String(text || '').replace(/\r/g, '').split('\n').forEach(ln => { if (!ln) { out.push(...GSPX.utf8('<0>')); return; } (/\\frac\{|[\^_]\{|√\{/.test(ln) ? [ln] : wrap(ln)).forEach(line); });
   out.push(62); return out;
+};
+// 앱 수식 표기 한 줄 → GSP 수식 구조: \frac{a}{b} → </a b>, x^{n} → <+ x n>, x_{n} → <- x n>, √{x} → <R x>
+GSPX.mathLine = (p, enc) => {
+  let i = 0;
+  const group = () => { if (p[i] !== '{') { const c = p[i++] || ''; return seq(c); } let d = 0, j = i; for (; j < p.length; j++) { if (p[j] === '{') d++; else if (p[j] === '}' && --d === 0) break; } const inner = p.slice(i + 1, j); i = j + 1; return seq(inner); };
+  const seq = str => { const save = [p, i]; p = str; i = 0; const parts = []; let txt = '';
+    const flush = () => { if (txt) { parts.push(enc(txt)); txt = ''; } };
+    while (i < p.length) {
+      if (p.startsWith('\\frac', i)) { flush(); i += 5; const a = group(), b = group(); parts.push([...GSPX.utf8('</'), ...a, ...b, 62]); continue; }
+      if ((p[i] === '^' || p[i] === '_') && p[i + 1] === '{') { // GSP: 위·아래 첨자는 <+ 밑 지수> — 밑은 바로 앞 글자(또는 앞 덩어리)
+        const t = p[i] === '^' ? '+' : '-'; let base;
+        if (txt) { const cs = [...txt]; base = enc(cs.pop()); txt = cs.join(''); flush(); } else base = parts.length ? parts.pop() : GSPX.utf8('<0>');
+        i++; const g = group(); parts.push([...GSPX.utf8('<' + t), ...base, ...g, 62]); continue; }
+      if (p[i] === '√' && p[i + 1] === '{') { flush(); i++; const g = group(); parts.push([...GSPX.utf8('<R'), ...g, 62]); continue; }
+      txt += p[i++];
+    }
+    flush(); [p, i] = save; return parts.length === 1 ? parts[0] : [...GSPX.utf8('<H'), ...parts.flat(), 62]; };
+  return seq(p);
 };
 GSPX.capRec = (mk, sx, sy) => { const tail = mk.length % 2 ? 3 : 4; return new GSPX.B().hex('fc080000').u32(18 + mk.length + tail - 2).u32(4).i16(sx).i16(sy).u16(mk.length).bytes(mk).zeros(tail).get(); };
 GSPX.MOVESP = { 2: 0, 6: 1, 15: 2, 0: 3 }; // 앱 이동 속도 → GSP 이동 버튼 속도 번호
@@ -175,6 +194,7 @@ function buildGSP() {
         if (par && par.some(v => !(v > 0))) throw 0; // 빠진 부모가 있으면 이 객체도 뺀다 (0 번 부모는 GSP 가 손상으로 봄)
         const [r, g, b] = GSPX.rgb(o ? o.color : 'ink');
         let e = opt.e ?? 0x121; if (o && opt.e == null && o.t !== 'point' && o.t !== 'value') { e = 0x120 + Math.max(1, Math.min(3, Math.round(o.w || 1))); if (o.dash) e = (o.dash === 2 ? 0x100 : 0x110) + (e & 0xf); } // 0x1SW: S 2=실선 1=파선 0=점선
+        if (o && o.t === 'point' && (e & 0xff) === 0x21 && e >= 256) e = (Math.max(1, Math.min(3, o.ps || 2)) << 8) | 0x21; // 점 크기
         const hid = (o && o.hidden) || opt.hidden ? 1 : 0;
         const h = new GSPX.B().u32(code | ((hid | (opt.fl || 0)) << 16)).u16(0).u16(c).u16(k).u16(e).u8(r).u8(g).u8(b).u8(0);
         if (opt.interior) h.hex('ff7f0000').zeros(8); else if (opt.pic) h.hex('ffff0000').zeros(8); else h.hex('ffff0000c1bdf0ff00000000');
@@ -186,19 +206,20 @@ function buildGSP() {
       const P1 = id => idx.get(id); const img77 = new Map(); // 반복 id:원본 id → 반복된 상(77) 번호
       const lab = (o, rs) => { const l = o.k === 'xf' || (o.t !== 'point' && !o.showLabel) ? null : GSPX.label(o); if (l) { const at = rs.length && rs[0][0] === 2201 ? 0 : rs.length; rs.splice(at, 0, [2005, l], [2008, Uint8Array.of(0, 0)]); } return rs; }; // 순서: 2002, 종류별 자료, 2005·2008 (단, 자유점은 2005·2008 뒤에 2201)
       const freePt = (o, x, y, opt = {}) => { const [px, py] = PX(x, y); return emit(0, 1, opt.k || 4, [], o, lab(o, [[2201, new GSPX.B().f64(px).f64(py).get()]]), { e: 0x221 }); };
-      const valRec = (o) => o.d.name ? [[2307, GSPX.disp(o.d.sx || 10, o.d.sy || 10, 3).get()], [2005, GSPX.valLabel(o.d.name)], [2008, Uint8Array.of(1, 0)]] : [[2307, GSPX.disp(o.d.sx || 10, o.d.sy || 10).get()], [2008, Uint8Array.of(1, 0)]]; // 이름 있는 측정값: 표시 방식 3 + 이름표(아래 첨자는 [n])
+      const valRec = (o) => o.d.name ? [[2307, GSPX.disp(o.d.sx || 10, o.d.sy || 10, 3, o.prec ?? 2).get()], [2005, GSPX.valLabel(o.d.name)], [2008, Uint8Array.of(1, 0)]] : [[2307, GSPX.disp(o.d.sx || 10, o.d.sy || 10, o.d.vonly ? 1 : 0, o.prec ?? 2).get()], [2008, Uint8Array.of(1, 0)]]; // 이름 있는 측정값: 표시 방식 3 + 이름표(아래 첨자는 [n])
       const exprRec = (o, toks, kind) => { // kind: calc | func | param
-        const b = new GSPX.B().bytes(GSPX.disp(o.d.sx || 10, o.d.sy || 10, kind === 'param' || (kind === 'calc' && o.d.name) ? 3 : 0).get()).hex('07090000').u32(60 + 2 * toks.length).u32(0x30).u16(toks.length);
+        const b = new GSPX.B().bytes(GSPX.disp(o.d.sx || 10, o.d.sy || 10, kind === 'param' || (kind === 'calc' && o.d.name) ? 3 : kind === 'calc' && o.d.vonly ? 1 : 0, o.prec ?? 2).get()).hex('07090000').u32(60 + 2 * toks.length).u32(0x30).u16(toks.length);
         if (kind === 'calc') b.u16(4).u16(0).u16(1).zeros(8).u32(4).zeros(28);
         else if (kind === 'func') b.u16(o.d.form === 'xy' ? 1 : 0).u16(8).u16(0).zeros(8).u32(4).zeros(28); // 1: x = f(y)
-        else { const v = +o.d.v || 0; b.u16(4).u16(10).u16(3).f64(o.d.step || 0.01).f64(o.d.min ?? -100).f64(o.d.max ?? 100).f64(v).f64(v); }
+        else { const v = +o.d.v || 0, gk = o.d.gpk || [10, 3]; b.u16(4).u16(gk[0]).u16(gk[1]).f64(o.d.step || 0.01).f64(o.d.min ?? -100).f64(o.d.max ?? 100).f64(v).f64(v); }
         toks.forEach(t => b.u16(t)); return b.get();
       };
       const kOf = o => o.t === 'polygon' ? GSPX.polyK(o.p.length) : (GSPX.CK[o.t] || [0, 0])[1];
       const cOf = o => o.t === 'polygon' ? 4 : (GSPX.CK[o.t] || [0, 0])[0];
       // 가져온 좌표축(숨은 보조 직선)은 GSP 의 축 객체(58)로 되돌린다
       const axisAux = new Set(); doc.objs.forEach(q => { if (q.t === 'point' && q.d && q.d.pich && q.hidden && doc.objs.every(c => !c.p.includes(q.id) || (c.t === 'picture' && c.k === 'pts'))) axisAux.add(q.id); }); // 그림의 보조 꼭짓점: 그림은 자기 행렬로 저장되므로 따로 쓰지 않음
-      doc.objs.forEach(l => { if (!l.isAxis) return; axisAux.add(l.id); const q = obj(l.p[1]); if (q && q.k === 'xf' && q.hidden && doc.objs.every(c => !c.p.includes(q.id) || c.isAxis)) axisAux.add(q.id); });
+      const axisOf = l => doc.objs.find(c => c.t === 'coord' && c.k !== 'given' && c.p[0] === l.p[0] && (l.p[1] === c.p[1] || l.p[1] === c.p[2] || (obj(l.p[1]) && obj(l.p[1]).k === 'xf' && obj(l.p[1]).p[0] === c.p[1])));
+      doc.objs.forEach(l => { if (!l.isAxis || !axisOf(l)) return; axisAux.add(l.id); /* 좌표계에 딸린 축만: 좌표계 없이 남은 축은 보통 직선으로 */ const q = obj(l.p[1]); if (q && q.k === 'xf' && q.hidden && doc.objs.every(c => !c.p.includes(q.id) || c.isAxis)) axisAux.add(q.id); });
       // 좌표계는 그 원점·단위점 바로 뒤에 쓴다: GSP 는 축 위의 점이 좌표계(61)보다 앞에 올 수 있고, 축(58)은 좌표계를 쓸 때 함께 나온다
       const order = doc.objs.filter(o => o.t !== 'coord' || o.k === 'given');
       for (const c of doc.objs) { if (c.t !== 'coord' || c.k === 'given') continue; const last = Math.max(-1, ...c.p.map(id => order.findIndex(x => x.id === id))); order.splice(last + 1, 0, c); }
@@ -221,23 +242,23 @@ function buildGSP() {
             const [O, U, Vy] = o.p; const UL = obj(U) && obj(U).k === 'unitlen' && isStraight(obj(obj(U).p[1])) ? obj(U) : null;
             if (UL && !Vy) { // 원점 + 단위 길이 선분: GSP 59(x축)·56(y 단위)·58(y축)·61
               const iO = P1(O), iS = P1(UL.p[1]); if (!iO || !iS) throw 0;
-              const ax = emit(59, 9, 38, [iO, iS], o, [[2309, new GSPX.B().u32(1).get()], [2005, GSPX.label({ label: 'x' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
+              const ax = emit(59, 9, 38, [iO, iS], { ...o, hidden: o.hidden || !!o.d.hx, color: o.d.cx || o.color }, [[2309, new GSPX.B().u32(1).get()], [2005, GSPX.label({ label: 'x' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
               const iY = emit(56, 1, 40, [ax], null, [[2003, new GSPX.B().u32(56).f64(10).get()]], { e: 0x221, fl: 4 });
-              const ay = emit(58, 9, 38, [iO, iY], o, [[2309, new GSPX.B().u32(0).get()], [2005, GSPX.label({ label: 'y' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
+              const ay = emit(58, 9, 38, [iO, iY], { ...o, hidden: o.hidden || !!o.d.hy, color: o.d.cy || o.color }, [[2309, new GSPX.B().u32(0).get()], [2005, GSPX.label({ label: 'y' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
               id = emit(61, 8, 39, [ax, ay], { color: '#c0c0c0', hidden: o.hidden || o.d.grid === false }, [[2308, new GSPX.B().u32(1).u32(0).get()]], { e: 0x120 });
               if (!csFirst) csFirst = id;
-              doc.objs.forEach(l => { if (l.isAxis && l.p[0] === O) idx.set(l.id, l.p[1] === U ? ax : ay); });
+              doc.objs.forEach(l => { if (l.isAxis && axisOf(l) === o) idx.set(l.id, l.p[1] === U ? ax : ay); });
             } else {
             const iO = P1(O), iU = P1(U); if (!iO || !iU) throw 0;
             const u = (obj(U).d.u || 1) * PXCM;
-            const ax = emit(58, 9, 38, [iO, iU], o, [[2309, new GSPX.B().u32(1).get()], [2005, GSPX.label({ label: 'x' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
+            const ax = emit(58, 9, 38, [iO, iU], { ...o, hidden: o.hidden || !!o.d.hx, color: o.d.cx || o.color }, [[2309, new GSPX.B().u32(1).get()], [2005, GSPX.label({ label: 'x' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
             let iY;
             if (Vy && obj(Vy)) { iY = emit(55, 1, 40, [iU], null, [[2003, new GSPX.B().u32(55).f64((obj(Vy).d.u || 1) * PXCM).get()]], { e: 0x221, hidden: obj(Vy).hidden ? 1 : 0 }); idx.set(Vy, iY); } // 세로 단위점도 다른 객체가 쓸 수 있게
             else iY = emit(54, 1, 40, [iU], null, [[2003, new GSPX.B().u32(54).f64(u).get()]], { e: 0x221, fl: 4 });
-            const ay = emit(58, 9, 38, [iO, iY], o, [[2309, new GSPX.B().u32(0).get()], [2005, GSPX.label({ label: 'y' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
+            const ay = emit(58, 9, 38, [iO, iY], { ...o, hidden: o.hidden || !!o.d.hy, color: o.d.cy || o.color }, [[2309, new GSPX.B().u32(0).get()], [2005, GSPX.label({ label: 'y' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
             id = emit(61, 8, 39, [ax, ay], { color: '#c0c0c0', hidden: o.hidden || o.d.grid === false }, [[2308, new GSPX.B().u32(1).u32(0).get()]], { e: 0x120 });
             if (!csFirst) csFirst = id;
-            doc.objs.forEach(l => { if (l.isAxis && l.p[0] === O) idx.set(l.id, l.p[1] === U ? ax : ay); });
+            doc.objs.forEach(l => { if (l.isAxis && axisOf(l) === o) idx.set(l.id, l.p[1] === U ? ax : ay); });
             }
           } else if (o.t === 'point' && o.k === 'unitlen' && isStraight(obj(o.p[1])) && doc.objs.some(c => c.t === 'coord' && c.p[1] === o.id && !c.p[2])) {
             idx.set(o.id, -1); continue; // 좌표계를 만들 때 59 로 씀
@@ -393,13 +414,13 @@ function buildGSP() {
               const r = b.get(); new DataView(r.buffer).setUint32(4, r.length, true); const w = 16 + 8 * String(o.d.text || '').length;
               id = emit(0, 10, 23, [], o, [[2310, r], [2005, l], [2008, Uint8Array.of(1, 0)], [2210, new GSPX.B().i16(sx).i16(sy).i16(sx + w).i16(sy + 19).get()]]);
             }
-          } else if (id == null && o.t === 'table' && o.k === 'tab') { // 표 (GSP 91): 칸 내용은 글자로
+          } else if (id == null && o.t === 'table' && o.k === 'tab') { // 표 (GSP 91): 칸 내용은 글자로 — 머리의 두 수는 (행 수 + 2, 열 수 + 1), 행 수에는 실시간 행도 든다
             const p = o.p.map(P1); if (!p.length || p.some(v => !(v > 0))) throw 0;
             const T = s => { const u = GSPX.utf8(String(s)); return '<T' + u.length.toString(16).toUpperCase() + 'x' + String(s) + '>'; };
             const cell = v => '<H' + T(cellStr(v)) + '>';
             const heads = tableHeads(o); const rows = (o.d.rows || []).concat([o.p.map(id => cellVal(id))]);
-            const mk = '0'.repeat(heads.length + 2) + heads.map(h => '<SS2' + T(h) + '>').join('') + rows.map(r => '0' + r.map(cell).join('')).join('');
-            const mb = GSPX.utf8(mk); const b = new GSPX.B().hex('0d090000').u32(0).u32(0x10).i16(o.d.sx || 10).i16(o.d.sy || 10).u16(heads.length + 3).u16(rows.length).u16(1).zeros(6).bytes(mb).u8(0); if (b.a.length % 2) b.u8(0);
+            const mk = '0'.repeat(heads.length + 2) + heads.map(h => T(h)).join('') + rows.map(r => '0' + r.map(cell).join('')).join('');
+            const mb = GSPX.utf8(mk); const b = new GSPX.B().hex('0d090000').u32(0).u32(0x10).i16(o.d.sx || 10).i16(o.d.sy || 10).u16(rows.length + 2).u16(heads.length + 1).u16(1).zeros(6).bytes(mb).u8(0); if (b.a.length % 2) b.u8(0);
             const r = b.get(); new DataView(r.buffer).setUint32(4, r.length, true);
             id = emit(91, 17, 83, p, o, [[2317, r], [2008, Uint8Array.of(1, 0)]]);
           } else if (id == null && o.t === 'iter' && o.k === 'geo') {

@@ -180,7 +180,7 @@ function curveIntersections(oa, ga, ob, gb) {
       const S = fplotSamples(fg, 600); const val = p => p ? sf.s(p) : NaN;
       for (let i = 1; i < S.length; i++) {
         const a = S[i - 1], b = S[i]; const va = val(a.p), vb = val(b.p);
-        if (!isFinite(va) || !isFinite(vb) || Math.sign(va) === Math.sign(vb)) { if (va === 0 && a.p && sf.ok(a.p)) out.push({ p: a.p, ok: true }); continue; }
+        if (!isFinite(va) || !isFinite(vb) || Math.sign(va) === Math.sign(vb)) { if ((va === 0 || (i === 1 && Math.abs(va) < 1e-4)) && a.p && sf.ok(a.p)) out.push({ p: a.p, ok: true }); else if (i === S.length - 1 && Math.abs(vb) < 1e-4 && b.p && sf.ok(b.p)) out.push({ p: b.p, ok: true }); continue; }
         if (a.p && b.p && vdist(a.p, b.p) > 5) continue;
         let lo = a.t, hi = b.t, vlo = va;
         for (let k = 0; k < 50; k++) { const m = (lo + hi) / 2, vm = val(fplotAt(fg, m)); if (!isFinite(vm)) break; if (Math.sign(vm) === Math.sign(vlo)) { lo = m; vlo = vm; } else hi = m; }
@@ -204,8 +204,11 @@ function curveIntersections(oa, ga, ob, gb) {
   const sfB = signedFn(ob, gb), sfA = signedFn(oa, ga);
   const poly = sfB ? A : sfA ? B : A, other = sfB || sfA;
   if (other) {
+    const EPS = 1e-4; // cm (화면에서 0.004px): 꺾은선 보간 오차보다 크게
     for (let i = 1; i < poly.pts.length; i++) {
       const a = poly.pts[i - 1], b = poly.pts[i]; if (!a || !b) continue; const va = other.s(a), vb = other.s(b);
+      if (!poly.pts[i - 2] && Math.abs(va) < EPS && Math.sign(va) === Math.sign(vb)) { out.push({ p: a, ok: other.ok(a) }); continue; } // 꺾은선 시작점에 꼭 걸친 교점 (GSP 도 셈)
+      if (!poly.pts[i + 1] && Math.abs(vb) < EPS && Math.sign(va) === Math.sign(vb)) { out.push({ p: b, ok: other.ok(b) }); continue; } // 끝점
       if (Math.sign(va) === Math.sign(vb) || vdist(a, b) > 6) continue;
       if (other === signedFn(ob, gb) || other) {
         // 직선/원은 선분과 정확한 교점, 원은 보간
@@ -244,18 +247,20 @@ function drawCoord(co, o) {
   }
   if (o.d.axes === false) { ctx.restore(); return; }
   const marked = o.id === doc.coordId;
-  ctx.strokeStyle = THEME.axis; ctx.lineWidth = marked ? 1.3 : 1; ctx.beginPath(); ctx.moveTo(0, O.y); ctx.lineTo(W, O.y); ctx.moveTo(O.x, 0); ctx.lineTo(O.x, H); ctx.stroke();
-  ctx.fillStyle = THEME.axis; ctx.beginPath(); ctx.moveTo(W - 2, O.y); ctx.lineTo(W - 11, O.y - 4); ctx.lineTo(W - 11, O.y + 4); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(O.x, 2); ctx.lineTo(O.x - 4, 11); ctx.lineTo(O.x + 4, 11); ctx.fill();
+  const hx = !!o.d.hx, hy = !!o.d.hy; // GSP: 축마다 따로 숨길 수 있다 (수직선처럼 x축만 보이기)
+  const ax = o.d.cx ? col(o.d.cx) : THEME.axis, ay = o.d.cy ? col(o.d.cy) : THEME.axis; ctx.lineWidth = marked ? 1.3 : 1;
+  if (!hx) { ctx.strokeStyle = ax; ctx.beginPath(); ctx.moveTo(0, O.y); ctx.lineTo(W, O.y); ctx.stroke(); } if (!hy) { ctx.strokeStyle = ay; ctx.beginPath(); ctx.moveTo(O.x, 0); ctx.lineTo(O.x, H); ctx.stroke(); }
+  ctx.fillStyle = ax; if (!hx) { ctx.beginPath(); ctx.moveTo(W - 2, O.y); ctx.lineTo(W - 11, O.y - 4); ctx.lineTo(W - 11, O.y + 4); ctx.fill(); }
+  ctx.fillStyle = ay; if (!hy) { ctx.beginPath(); ctx.moveTo(O.x, 2); ctx.lineTo(O.x - 4, 11); ctx.lineTo(O.x + 4, 11); ctx.fill(); }
   if (sel.includes(o.id) || hoverId === o.id) { ctx.strokeStyle = sel.includes(o.id) ? THEME.sel : THEME.hover; ctx.globalAlpha = 0.5; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(0, O.y); ctx.lineTo(W, O.y); ctx.moveTo(O.x, 0); ctx.lineTo(O.x, H); ctx.stroke(); ctx.globalAlpha = 1; }
   if (o.d.ticks !== false) {
     ctx.font = tickFont(); ctx.fillStyle = THEME.muted; ctx.strokeStyle = THEME.axis; ctx.lineWidth = 1;
     const lab = v => String(+v.toFixed(6)).replace('-', '−'); const labX = v => trig ? piLabel(Math.round(v / (Math.PI / 2))) : lab(v);
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    for (let x = gx0; x <= gx1; x += sx) { if (Math.abs(x) < sx / 2) continue; const p = O.x + x * ux; ctx.beginPath(); ctx.moveTo(p, O.y - 3); ctx.lineTo(p, O.y + 3); ctx.stroke(); ctx.fillText(labX(x), p, clamp(O.y + 5, 2, H - 14)); }
+    if (!hx) for (let x = gx0; x <= gx1; x += sx) { if (Math.abs(x) < sx / 2) continue; const p = O.x + x * ux; ctx.beginPath(); ctx.moveTo(p, O.y - 3); ctx.lineTo(p, O.y + 3); ctx.stroke(); ctx.fillText(labX(x), p, clamp(O.y + 5, 2, H - 14)); }
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    for (let y = gy0; y <= gy1; y += sy) { if (Math.abs(y) < sy / 2) continue; const p = O.y - y * uy; ctx.beginPath(); ctx.moveTo(O.x - 3, p); ctx.lineTo(O.x + 3, p); ctx.stroke(); ctx.fillText(lab(y), clamp(O.x - 6, 22, W - 2), p); }
-    ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillText('0', O.x - 5, O.y + 4);
+    if (!hy) for (let y = gy0; y <= gy1; y += sy) { if (Math.abs(y) < sy / 2) continue; const p = O.y - y * uy; ctx.beginPath(); ctx.moveTo(O.x - 3, p); ctx.lineTo(O.x + 3, p); ctx.stroke(); ctx.fillText(lab(y), clamp(O.x - 6, 22, W - 2), p); }
+    ctx.textAlign = 'right'; ctx.textBaseline = 'top'; if (!hx || !hy) ctx.fillText('0', hy ? O.x + 3 : O.x - 5, O.y + 4);
     if (o.d.xlabel || o.d.ylabel) { ctx.font = 'italic 600 15px ' + FAM.serif; ctx.fillStyle = THEME.ink; if (o.d.xlabel) { ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillText(o.d.xlabel, W - 6, clamp(O.y - 6, 18, H - 4)); } if (o.d.ylabel) { ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(o.d.ylabel, clamp(O.x + 8, 4, W - 40), 6); } }
   }
   ctx.restore();

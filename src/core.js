@@ -303,7 +303,7 @@ function parseExpr(src, resolve) {
   function power() { const b = primary(); if (eat('^')) return ['^', b, unary()]; return b; }
   function primary() {
     const t = T[i++]; if (!t) throw new Error('수식이 끝나지 않았습니다');
-    if (t.k === 'n') return ['n', t.v];
+    if (t.k === 'n') { const u = peek(); if (u && u.k === 'i' && typeof UNIT_TOK !== 'undefined' && UNIT_TOK.includes(u.v) && !doc.objs.some(o => o.label === u.v && o.t === 'value')) { i++; return ['*', ['n', t.v], ['u', u.v]]; } return ['n', t.v]; } // 1cm 처럼 수에 붙은 단위는 한 덩어리
     if (t.k === 'r') { const fo = obj(t.v); if (isFnObj(fo) && peek() && peek().v === '(') { i++; const a = expr(); if (!eat(')')) throw new Error('괄호가 닫히지 않았습니다'); return ['call', t.v, a]; } return ['r', t.v]; }
     if (t.v === '(') { const a = expr(); if (!eat(')')) throw new Error('괄호가 닫히지 않았습니다'); return a; }
     if (t.v === '|') { const a = expr(); if (!eat('|')) throw new Error('| 가 닫히지 않았습니다'); return ['f', 'abs', a]; }
@@ -586,7 +586,8 @@ function valueName(o) {
   }
   return disp(o.label);
 }
-function valueText(o) {
+function valueText(o) { const t = valueText0(o); if (o.d && o.d.vonly) { const i = t.indexOf(' = '); if (i >= 0) return t.slice(i + 3); } return t; } // vonly: GSP 표시 방식 1(값만)
+function valueText0(o) {
   const g = G[o.id], name = valueName(o);
   if (['func', 'deriv', 'data'].includes(o.k)) return funcText(o);
   if (!g) return name + ' = 정의되지 않음';

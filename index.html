@@ -509,7 +509,7 @@ function parseExpr(src, resolve) {
   function power() { const b = primary(); if (eat('^')) return ['^', b, unary()]; return b; }
   function primary() {
     const t = T[i++]; if (!t) throw new Error('수식이 끝나지 않았습니다');
-    if (t.k === 'n') return ['n', t.v];
+    if (t.k === 'n') { const u = peek(); if (u && u.k === 'i' && typeof UNIT_TOK !== 'undefined' && UNIT_TOK.includes(u.v) && !doc.objs.some(o => o.label === u.v && o.t === 'value')) { i++; return ['*', ['n', t.v], ['u', u.v]]; } return ['n', t.v]; } // 1cm 처럼 수에 붙은 단위는 한 덩어리
     if (t.k === 'r') { const fo = obj(t.v); if (isFnObj(fo) && peek() && peek().v === '(') { i++; const a = expr(); if (!eat(')')) throw new Error('괄호가 닫히지 않았습니다'); return ['call', t.v, a]; } return ['r', t.v]; }
     if (t.v === '(') { const a = expr(); if (!eat(')')) throw new Error('괄호가 닫히지 않았습니다'); return a; }
     if (t.v === '|') { const a = expr(); if (!eat('|')) throw new Error('| 가 닫히지 않았습니다'); return ['f', 'abs', a]; }
@@ -792,7 +792,8 @@ function valueName(o) {
   }
   return disp(o.label);
 }
-function valueText(o) {
+function valueText(o) { const t = valueText0(o); if (o.d && o.d.vonly) { const i = t.indexOf(' = '); if (i >= 0) return t.slice(i + 3); } return t; } // vonly: GSP 표시 방식 1(값만)
+function valueText0(o) {
   const g = G[o.id], name = valueName(o);
   if (['func', 'deriv', 'data'].includes(o.k)) return funcText(o);
   if (!g) return name + ' = 정의되지 않음';
@@ -1450,7 +1451,7 @@ function curveIntersections(oa, ga, ob, gb) {
       const S = fplotSamples(fg, 600); const val = p => p ? sf.s(p) : NaN;
       for (let i = 1; i < S.length; i++) {
         const a = S[i - 1], b = S[i]; const va = val(a.p), vb = val(b.p);
-        if (!isFinite(va) || !isFinite(vb) || Math.sign(va) === Math.sign(vb)) { if (va === 0 && a.p && sf.ok(a.p)) out.push({ p: a.p, ok: true }); continue; }
+        if (!isFinite(va) || !isFinite(vb) || Math.sign(va) === Math.sign(vb)) { if ((va === 0 || (i === 1 && Math.abs(va) < 1e-4)) && a.p && sf.ok(a.p)) out.push({ p: a.p, ok: true }); else if (i === S.length - 1 && Math.abs(vb) < 1e-4 && b.p && sf.ok(b.p)) out.push({ p: b.p, ok: true }); continue; }
         if (a.p && b.p && vdist(a.p, b.p) > 5) continue;
         let lo = a.t, hi = b.t, vlo = va;
         for (let k = 0; k < 50; k++) { const m = (lo + hi) / 2, vm = val(fplotAt(fg, m)); if (!isFinite(vm)) break; if (Math.sign(vm) === Math.sign(vlo)) { lo = m; vlo = vm; } else hi = m; }
@@ -1474,8 +1475,11 @@ function curveIntersections(oa, ga, ob, gb) {
   const sfB = signedFn(ob, gb), sfA = signedFn(oa, ga);
   const poly = sfB ? A : sfA ? B : A, other = sfB || sfA;
   if (other) {
+    const EPS = 1e-4; // cm (화면에서 0.004px): 꺾은선 보간 오차보다 크게
     for (let i = 1; i < poly.pts.length; i++) {
       const a = poly.pts[i - 1], b = poly.pts[i]; if (!a || !b) continue; const va = other.s(a), vb = other.s(b);
+      if (!poly.pts[i - 2] && Math.abs(va) < EPS && Math.sign(va) === Math.sign(vb)) { out.push({ p: a, ok: other.ok(a) }); continue; } // 꺾은선 시작점에 꼭 걸친 교점 (GSP 도 셈)
+      if (!poly.pts[i + 1] && Math.abs(vb) < EPS && Math.sign(va) === Math.sign(vb)) { out.push({ p: b, ok: other.ok(b) }); continue; } // 끝점
       if (Math.sign(va) === Math.sign(vb) || vdist(a, b) > 6) continue;
       if (other === signedFn(ob, gb) || other) {
         // 직선/원은 선분과 정확한 교점, 원은 보간
@@ -1514,18 +1518,20 @@ function drawCoord(co, o) {
   }
   if (o.d.axes === false) { ctx.restore(); return; }
   const marked = o.id === doc.coordId;
-  ctx.strokeStyle = THEME.axis; ctx.lineWidth = marked ? 1.3 : 1; ctx.beginPath(); ctx.moveTo(0, O.y); ctx.lineTo(W, O.y); ctx.moveTo(O.x, 0); ctx.lineTo(O.x, H); ctx.stroke();
-  ctx.fillStyle = THEME.axis; ctx.beginPath(); ctx.moveTo(W - 2, O.y); ctx.lineTo(W - 11, O.y - 4); ctx.lineTo(W - 11, O.y + 4); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(O.x, 2); ctx.lineTo(O.x - 4, 11); ctx.lineTo(O.x + 4, 11); ctx.fill();
+  const hx = !!o.d.hx, hy = !!o.d.hy; // GSP: 축마다 따로 숨길 수 있다 (수직선처럼 x축만 보이기)
+  const ax = o.d.cx ? col(o.d.cx) : THEME.axis, ay = o.d.cy ? col(o.d.cy) : THEME.axis; ctx.lineWidth = marked ? 1.3 : 1;
+  if (!hx) { ctx.strokeStyle = ax; ctx.beginPath(); ctx.moveTo(0, O.y); ctx.lineTo(W, O.y); ctx.stroke(); } if (!hy) { ctx.strokeStyle = ay; ctx.beginPath(); ctx.moveTo(O.x, 0); ctx.lineTo(O.x, H); ctx.stroke(); }
+  ctx.fillStyle = ax; if (!hx) { ctx.beginPath(); ctx.moveTo(W - 2, O.y); ctx.lineTo(W - 11, O.y - 4); ctx.lineTo(W - 11, O.y + 4); ctx.fill(); }
+  ctx.fillStyle = ay; if (!hy) { ctx.beginPath(); ctx.moveTo(O.x, 2); ctx.lineTo(O.x - 4, 11); ctx.lineTo(O.x + 4, 11); ctx.fill(); }
   if (sel.includes(o.id) || hoverId === o.id) { ctx.strokeStyle = sel.includes(o.id) ? THEME.sel : THEME.hover; ctx.globalAlpha = 0.5; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(0, O.y); ctx.lineTo(W, O.y); ctx.moveTo(O.x, 0); ctx.lineTo(O.x, H); ctx.stroke(); ctx.globalAlpha = 1; }
   if (o.d.ticks !== false) {
     ctx.font = tickFont(); ctx.fillStyle = THEME.muted; ctx.strokeStyle = THEME.axis; ctx.lineWidth = 1;
     const lab = v => String(+v.toFixed(6)).replace('-', '−'); const labX = v => trig ? piLabel(Math.round(v / (Math.PI / 2))) : lab(v);
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    for (let x = gx0; x <= gx1; x += sx) { if (Math.abs(x) < sx / 2) continue; const p = O.x + x * ux; ctx.beginPath(); ctx.moveTo(p, O.y - 3); ctx.lineTo(p, O.y + 3); ctx.stroke(); ctx.fillText(labX(x), p, clamp(O.y + 5, 2, H - 14)); }
+    if (!hx) for (let x = gx0; x <= gx1; x += sx) { if (Math.abs(x) < sx / 2) continue; const p = O.x + x * ux; ctx.beginPath(); ctx.moveTo(p, O.y - 3); ctx.lineTo(p, O.y + 3); ctx.stroke(); ctx.fillText(labX(x), p, clamp(O.y + 5, 2, H - 14)); }
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    for (let y = gy0; y <= gy1; y += sy) { if (Math.abs(y) < sy / 2) continue; const p = O.y - y * uy; ctx.beginPath(); ctx.moveTo(O.x - 3, p); ctx.lineTo(O.x + 3, p); ctx.stroke(); ctx.fillText(lab(y), clamp(O.x - 6, 22, W - 2), p); }
-    ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillText('0', O.x - 5, O.y + 4);
+    if (!hy) for (let y = gy0; y <= gy1; y += sy) { if (Math.abs(y) < sy / 2) continue; const p = O.y - y * uy; ctx.beginPath(); ctx.moveTo(O.x - 3, p); ctx.lineTo(O.x + 3, p); ctx.stroke(); ctx.fillText(lab(y), clamp(O.x - 6, 22, W - 2), p); }
+    ctx.textAlign = 'right'; ctx.textBaseline = 'top'; if (!hx || !hy) ctx.fillText('0', hy ? O.x + 3 : O.x - 5, O.y + 4);
     if (o.d.xlabel || o.d.ylabel) { ctx.font = 'italic 600 15px ' + FAM.serif; ctx.fillStyle = THEME.ink; if (o.d.xlabel) { ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillText(o.d.xlabel, W - 6, clamp(O.y - 6, 18, H - 4)); } if (o.d.ylabel) { ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(o.d.ylabel, clamp(O.x + 8, 4, W - 40), 6); } }
   }
   ctx.restore();
@@ -3700,13 +3706,37 @@ GSPI.markup = (u8, start, end) => {
       let j = i + 1, tag = ''; while (j < end && u8[j] !== 60 && u8[j] !== 62) tag += String.fromCharCode(u8[j++]);
       if (tag === '0' && u8[j] === 62) { flush(); out = out.replace(/ +$/, '') + '\n'; if (stack[stack.length - 1] === 'V') nl = true; i = j + 1; continue; } // 빈 줄
       if (tag[0] === '!' && u8[j] === 62) { const ch = GSPI.SYM[parseInt(tag.slice(1), 16)]; if (ch) { buf.push(...new TextEncoder().encode(ch)); } i = j + 1; continue; } // <!D7> 같은 Symbol 글꼴 문자
+      if ('/+-R|'.includes(tag[0])) { flush(); const r = GSPI.mathEl(u8, i, end); buf.push(...new TextEncoder().encode(r.s)); i = r.i; const top = stack[stack.length - 1]; flush(); if (top === 'V') nl = true; continue; } // 분수·위첨자·아래첨자·근호·절댓값: 앱 수식 표기로
       if (tag[0] === 'S' && /W2/.test(tag)) { flush(); bold = true; stack.push('B'); i = j; continue; }
       stack.push(tag[0]); i = j; continue;
     }
-    if (c === 62) { flush(); const tg = stack.pop(); if (tg === 'B') { if (bold) bold = false; else out = out.replace(/(\s*)$/, '**$1'); } if (tg === 'H') { if (stack[stack.length - 1] === 'V') nl = true; else gap = true; } i++; continue; }
+    if (c === 62) { flush(); const tg = stack.pop(); if (tg === 'B') { if (bold) bold = false; else out = out.replace(/(\s*)$/, '**$1'); } if (stack[stack.length - 1] === 'V') nl = true; else if (tg === 'H') gap = true; i++; continue; } // VL 의 자식 하나하나가 한 줄 (H·S 무엇이든)
     i++;
   }
   flush(); return out.replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').trim();
+};
+// 수식 요소 하나(<'/' 분수>, <'+' 밑 위첨자>, <'-' 밑 아래첨자>, <R 근호>, <| 절댓값>)를 앱 글상자 표기(\frac{}{}, ^{}, _{}, √{}, |…|)로
+GSPI.mathEl = (u8, i0, end) => {
+  const el = i => { // u8[i] === '<'
+    if (u8[i + 1] === 84) { let j = i + 2, h = ''; while (j < end && u8[j] !== 120 && j - i < 10) h += String.fromCharCode(u8[j++]); const n = parseInt(h, 16) || 0; const s = GSPI.dec(u8.slice(j + 1, j + 1 + n)); let k = j + 1 + n; if (u8[k] === 62) k++; return { n: { t: 'T', s }, i: k }; }
+    let j = i + 1, tag = ''; while (j < end && u8[j] !== 60 && u8[j] !== 62) tag += String.fromCharCode(u8[j++]);
+    const kids = []; while (j < end && u8[j] !== 62 && u8[j] !== 0) { if (u8[j] === 60) { const r = el(j); kids.push(r.n); j = r.i; } else j++; }
+    return { n: { t: tag, kids }, i: j + 1 };
+  };
+  const ser = n => {
+    if (n.t === 'T') return n.s.replace(/\r/g, '');
+    const k = n.kids.map(ser), c = n.t[0];
+    if (n.t === '0') return '';
+    if (c === '!') return GSPI.SYM[parseInt(n.t.slice(1), 16)] || '';
+    if (c === '/') return '\\frac{' + (k[0] || '') + '}{' + (k[1] || '') + '}';
+    if (c === '+') return (k[0] || '') + '^{' + k.slice(1).join('') + '}';
+    if (c === '-') return (k[0] || '') + '_{' + k.slice(1).join('') + '}';
+    if (c === 'R') return '√{' + k.join('') + '}';
+    if (c === '|') return '|' + k.join('') + '|';
+    if (c === 'V') return k.join(' ');
+    return k.join('');
+  };
+  const r = el(i0); return { s: ser(r.n), i: r.i };
 };
 GSPI.fam = (n) => /courier|mono|consol|fixed/i.test(n) ? 'mono' : /times|serif|바탕|명조|batang|myungjo|궁서|georgia|garamond|book|symbol|cambria|palatino/i.test(n) ? 'serif' : n ? 'sans' : 'serif';
 // Symbol 글꼴 문자 (<!XX>): 그리스 문자·수학 기호
@@ -3784,11 +3814,12 @@ GSPI.build = (F, sec, links) => {
     if (s) { o.label = s; o.showLabel = dv.getUint16(r.p + 2, true) === 1; const ty = dv.getUint16(r.p, true); o.ltype = ty; o._glo = ty === 7 ? { x: dv.getInt16(r.p + 6, true), y: dv.getInt16(r.p + 8, true) } : { x: 6, y: 6 }; } // 7: 레이블 왼쪽 위 = 점 + (dx, dy) / 6: GSP 가 자동으로 오른쪽 아래
   };
   const style = (src, o) => {
-    o.hidden = !!(src.fl & 1);
+    o.hidden = !!(src.fl & (src.code === 76 || src.code === 89 ? 1 : 3)); // 2: GSP 가 화면에 그리지 않는 객체 (반복 객체 자체는 상(77)으로 그려지므로 제외)
     o.color = GSPI.color(...src.rgb);
     const e = src.e; let w = 1, dash = 0;
     if (e < 256) { w = e === 0 ? 1 : e; dash = e === 0 ? 1 : 0; } else { w = (e & 0xf) || 1; const st = (e >> 4) & 0xf; dash = st === 1 ? 1 : st === 0 ? 2 : 0; } // 0x1SW: S 2=실선 1=파선 0=점선, W 굵기
     if (o.t !== 'point') { o.w = Math.min(3, w); o.dash = dash; }
+    else if (e >= 256) { const z = e >> 8; if (z === 1) o.ps = 1; else if (z >= 3) o.ps = 3; } // 점 크기: GSP 1 작게 · 2 보통 · 3 크게
     if (isInterior(o)) o.alpha = 0.45;
   };
   const pos = (src, tag) => { const r = src.rec[tag]; return r && r.len >= 16 ? { sx: dv.getInt16(r.p + 12, true), sy: dv.getInt16(r.p + 14, true) } : null; };
@@ -3813,7 +3844,9 @@ GSPI.build = (F, sec, links) => {
   const valAt = (src, k, p, extra = {}) => { const id = mkValue(k, p, extra); const q = pos(src, 2307) || pos(src, 2311); if (q) Object.assign(obj(id).d, q);
     const r = src.rec[2307] || src.rec[2311]; // 표시 이름: 표시 문자열이 '<0>'(자동)이 아니면 그 글자가 측정값 이름
     if (r && r.len >= 20 && k !== 'func' && k !== 'param') { const n = dv.getUint16(r.p + 16, true); if (n > 3 && 18 + n <= r.len) { try { const nm = GSPI.markup(u8, r.p + 18, r.p + 18 + n).trim(); if (nm) obj(id).d.name = nm; } catch (e) { } }
+      else if (n === 3 && r.len >= 28 && dv.getUint16(r.p + 26, true) === 1) obj(id).d.vonly = true; // 방식 1: 값만 보임
       else if (n === 3 && r.len >= 28 && dv.getUint16(r.p + 26, true) === 3) { const l = src.rec[2005]; if (l && l.len >= 24) { const m = dv.getUint16(l.p + 22, true); const nm = GSPI.dec(u8.slice(l.p + 24, l.p + 24 + Math.min(m, l.len - 24))).replace(/\0.*$/, '').trim(); if (nm) obj(id).d.name = nm.replace(/\[(\d+)\]/g, (q, d) => [...d].map(c => String.fromCharCode(0x2080 + +c)).join('')); } } } // 방식 3: 이름표(2005)를 측정값 이름으로
+    if (r && r.len >= 30 && k !== 'func' && dv.getUint16(r.p + 16, true) === 3) { const pr = dv.getUint16(r.p + 28, true); if (pr <= 8 && pr !== 2) obj(id).prec = pr; } // 소수 자리 (GSP 기본 2)
     return id; };
   const img77 = {}; // 반복된 상(77) 객체 번호 → [반복, 원본]: 숨기기/보이기 버튼이 가리킬 수 있다
   sec.objs.forEach((s, i) => {
@@ -3853,7 +3886,9 @@ GSPI.build = (F, sec, links) => {
           if (s.k === 57) { id = valAt(s, 'func', [], { expr: GSPI.expr(T.t, () => null), form: T.form, notation: 'f' }); break; }
           if (s.k !== 79) { id = valAt(s, 'calc', [], { expr: GSPI.expr(T.t, () => null) }); break; } // 부모 없는 계산값(상수 식): k 는 단위 종류(48 거리·49 각·50 넓이·51 없음)
           let v = D(T.r, T.r.len - 2 * T.n - 8); try { const e = GSPI.expr(T.t, () => null); if (/^[\d.\s+\-*/^()pie]+$/.test(e) && /\d|pi/.test(e)) { const x = Function('return (' + e.replace(/\^/g, '**').replace(/\bpi\b/g, 'Math.PI').replace(/\be\b/g, 'Math.E') + ')')(); if (isFinite(x)) v = x; } } catch (er) { } // 값은 식(토큰)이 기준
-          id = valAt(s, 'param', [], { v: isFinite(v) ? v : 1, min: -10, max: 10, step: 0.1, unit: 'none' }); break;
+          { const r = T.r, ok = r.len >= 92 + 2 * T.n, st = ok ? D(r, 52) : NaN, lo = ok ? D(r, 60) : NaN, hi = ok ? D(r, 68) : NaN;
+            id = valAt(s, 'param', [], { v: isFinite(v) ? v : 1, min: isFinite(lo) && lo < hi ? lo : -10, max: isFinite(hi) && lo < hi ? hi : 10, step: isFinite(st) && st > 0 ? st : 0.1, unit: 'none' });
+            if (ok) obj(id).d.gpk = [dv.getUint16(r.p + 48, true), dv.getUint16(r.p + 50, true)]; } break; // 키보드 증가량·범위와 GSP 표시 값 두 개는 그대로 다시 쓴다
         }
         case 76: case 89: { // 반복: [깊이 값], 원상들, 사상별 상들, 그 뒤 연쇄 객체
           const r = s.rec[2314]; const npre = r ? dv.getUint16(r.p + 6, true) || 1 : 1, nm = r ? dv.getUint32(r.p + 8, true) || 1 : 1, depth = r ? dv.getUint32(r.p + 16, true) : 3;
@@ -3956,7 +3991,7 @@ GSPI.build = (F, sec, links) => {
           pend.O = O; pend.U = u.id; pend.V = null;
           const L = mkStraight('line', O, u.id); const l = obj(L); if (!l) { map[i] = -1; return; } l.hidden = true; l.isAxis = 'x'; map[i] = L; return;
         }
-        case 56: if (pend.U == null) break; id = pend.U; break; // 위 좌표계의 y 단위(x 와 같음)
+        case 56: if (pend.U == null) break; map[i] = pend.U; return; // 위 좌표계의 y 단위(x 와 같음) — 숨은 단위점의 모양은 그대로
         case 55: { const r = s.rec[2003]; const O = obj(P[0]).p[0]; const o = add({ t: 'point', k: 'unit', p: [O], d: { u: D(r, 4) / PXCM, axis: 'y' } }); giveLabel(o, false); o.ps = 1; id = o.id; pend.V = id; break; }
         case 121: map[i] = null; return; // 슬라이더 눈금(장식)
         case 58: { // 축: 그 위의 점(축 위의 점)을 위해 숨은 직선으로 둔다
@@ -3969,7 +4004,7 @@ GSPI.build = (F, sec, links) => {
         case 61: {
           const O = pend.O, U = pend.U; if (O == null || U == null) break;
           const co = add({ t: 'coord', k: 'c', p: pend.V ? [O, U, pend.V] : [O, U], d: { grid: !(s.fl & 1), form: pend.V ? 'rect' : 'square' } });
-          const axes = s.par.map(j => sec.objs[j]).filter(x => x && x.code === 58); if (axes.length && axes.every(x => x.fl & 1)) co.hidden = true;
+          const axes = s.par.map(j => sec.objs[j]).filter(x => x && (x.code === 58 || x.code === 59)); if (axes.length && axes.every(x => x.fl & 1)) co.hidden = true; if (axes.length === 2) { if (axes[0].fl & 1) co.d.hx = true; if (axes[1].fl & 1) co.d.hy = true; const cx = GSPI.color(...axes[0].rgb), cy = GSPI.color(...axes[1].rgb); if (cx !== 'ink') co.d.cx = cx; if (cy !== 'ink') co.d.cy = cy; } // 축마다 숨김·색
           if (!doc.coordId) doc.coordId = co.id; id = co.id;
           sec.objs.forEach((x, j) => { if (map[j] === -1) map[j] = co.id; });
           map[i] = id; return;
@@ -4049,6 +4084,7 @@ GSPI.fixInts = () => {
   recompute();
   for (const o of doc.objs) {
     if (o.t !== 'point' || o.k !== 'int' || G[o.id] || o.p.some(id => !G[id])) continue;
+    if (o.p.some(id => obj(id) && (obj(id).t === 'fplot' || obj(id).t === 'locus')) && (o.d.i || 0) !== 0) continue; // 그래프·자취와의 교점(98): 1 이상은 GSP 순서 그대로 (곡선 끝을 지나면 GSP 도 정의되지 않음), 0 이 없을 때만 1 로
     o.d.i = 1 - (o.d.i || 0); recompute(); if (!G[o.id]) { o.d.i = 1 - o.d.i; recompute(); }
   }
 };
@@ -4239,7 +4275,7 @@ GSPX.B = class { // 작은 바이트 버퍼
   get() { return Uint8Array.from(this.a); }
 };
 GSPX.utf8 = s => new TextEncoder().encode(s);
-GSPX.rgb = c => { const h = c === 'ink' || !c ? '#000000' : col(c); const m = /^#([0-9a-f]{6})/i.exec(h); const v = m ? m[1] : '000000'; return [0, 2, 4].map(i => parseInt(v.substr(i, 2), 16)); };
+GSPX.rgb = c => { if (c === 'red') return [255, 0, 0]; if (c === 'blue') return [0, 0, 255]; /* 불러올 때 GSP 의 순빨강·순파랑을 이름 색으로 바꾸므로 되돌린다 */ const h = c === 'ink' || !c ? '#000000' : col(c); const m = /^#([0-9a-f]{6})/i.exec(h); const v = m ? m[1] : '000000'; return [0, 2, 4].map(i => parseInt(v.substr(i, 2), 16)); };
 /* 객체 종류 → GSP 의 (분류 c, 종류 k) */
 GSPX.CK = { point: [1, 4], segment: [2, 14], line: [2, 12], ray: [2, 13], circle: [3, 28], arc: [12, 67], cinterior: [5, 16], sector: [13, 68], arcseg: [13, 69] };
 GSPX.polyK = n => n >= 3 && n <= 6 ? 49 + n : 15;
@@ -4274,7 +4310,7 @@ GSPX.tokens = (expr) => {
   return { toks, refs };
 };
 /* 측정값·계산이 공통으로 쓰는 32바이트 표시 머리 */
-GSPX.disp = (sx, sy, mode = 0) => new GSPX.B().hex('fc080000').u32(0x16).u32(4).i16(sx).i16(sy).hex('03003c303e0000000600').u16(mode).hex('0200').u16(0);
+GSPX.disp = (sx, sy, mode = 0, prec = 2) => new GSPX.B().hex('fc080000').u32(0x16).u32(4).i16(sx).i16(sy).hex('03003c303e0000000600').u16(mode).u16(Math.max(0, Math.min(8, prec | 0))).u16(0); // 방식, 소수 자리
 GSPX.valLabel = name => { const u = GSPX.utf8(GSPX.glabel(String(name).trim())); const b = new GSPX.B().u16(7).u16(0).u16(1).i16(8).i16(5).u16(0).u16(0).hex('986e12c1515c6141').u16(u.length).bytes(u).u8(0); if (b.a.length % 2) b.u8(0); return b.get(); };
 GSPX.glabel = s => String(s).replace(/[₀-₉]+/g, m => '[' + [...m].map(c => c.charCodeAt(0) - 0x2080).join('') + ']').replace(/′/g, "'").replace(/″/g, "''");
 GSPX.rect = o => { const x = o.d.sx || 10, y = o.d.sy || 10; return new GSPX.B().i16(x).i16(y).i16(x + 120).i16(y + 24).get(); };
@@ -4289,10 +4325,29 @@ GSPX.markup = (text, maxw = 640) => {
   const wrap = ln => { const out = []; let cur = '', w = 0; for (const word of ln.split(/(?<=\s)/)) { const ww = [...word.replace(/\*\*/g, '')].reduce((a, c) => a + cw(c), 0); if (cur && w + ww > maxw) { out.push(cur); cur = ''; w = 0; } cur += word; w += ww; } out.push(cur); return out; };
   const enc = s => { const u = GSPX.utf8(s); return [...GSPX.utf8('<T' + u.length.toString(16).toUpperCase() + 'x'), ...u, 62]; };
   const out = [...GSPX.utf8('<VL')]; let bold = false;
-  const line = p => { const segs = p.split('**'); if (segs.length === 1 && !bold) { out.push(...enc(p)); return; }
+  const line = p => { if (/\\frac\{|[\^_]\{|√\{/.test(p) && !p.includes('**')) { out.push(...GSPX.mathLine(p, enc)); return; } // 수식 표기가 있는 줄: GSP 수식 구조로
+    const segs = p.split('**'); if (segs.length === 1 && !bold) { out.push(...enc(p)); return; }
     out.push(...GSPX.utf8('<H')); segs.forEach((sg, k) => { if (k) bold = !bold; if (!sg) return; if (bold) out.push(...GSPX.utf8('<SW2'), ...enc(sg), 62); else out.push(...enc(sg)); }); out.push(62); };
-  String(text || '').replace(/\r/g, '').split('\n').forEach(ln => { if (!ln) { out.push(...GSPX.utf8('<0>')); return; } wrap(ln).forEach(line); });
+  String(text || '').replace(/\r/g, '').split('\n').forEach(ln => { if (!ln) { out.push(...GSPX.utf8('<0>')); return; } (/\\frac\{|[\^_]\{|√\{/.test(ln) ? [ln] : wrap(ln)).forEach(line); });
   out.push(62); return out;
+};
+// 앱 수식 표기 한 줄 → GSP 수식 구조: \frac{a}{b} → </a b>, x^{n} → <+ x n>, x_{n} → <- x n>, √{x} → <R x>
+GSPX.mathLine = (p, enc) => {
+  let i = 0;
+  const group = () => { if (p[i] !== '{') { const c = p[i++] || ''; return seq(c); } let d = 0, j = i; for (; j < p.length; j++) { if (p[j] === '{') d++; else if (p[j] === '}' && --d === 0) break; } const inner = p.slice(i + 1, j); i = j + 1; return seq(inner); };
+  const seq = str => { const save = [p, i]; p = str; i = 0; const parts = []; let txt = '';
+    const flush = () => { if (txt) { parts.push(enc(txt)); txt = ''; } };
+    while (i < p.length) {
+      if (p.startsWith('\\frac', i)) { flush(); i += 5; const a = group(), b = group(); parts.push([...GSPX.utf8('</'), ...a, ...b, 62]); continue; }
+      if ((p[i] === '^' || p[i] === '_') && p[i + 1] === '{') { // GSP: 위·아래 첨자는 <+ 밑 지수> — 밑은 바로 앞 글자(또는 앞 덩어리)
+        const t = p[i] === '^' ? '+' : '-'; let base;
+        if (txt) { const cs = [...txt]; base = enc(cs.pop()); txt = cs.join(''); flush(); } else base = parts.length ? parts.pop() : GSPX.utf8('<0>');
+        i++; const g = group(); parts.push([...GSPX.utf8('<' + t), ...base, ...g, 62]); continue; }
+      if (p[i] === '√' && p[i + 1] === '{') { flush(); i++; const g = group(); parts.push([...GSPX.utf8('<R'), ...g, 62]); continue; }
+      txt += p[i++];
+    }
+    flush(); [p, i] = save; return parts.length === 1 ? parts[0] : [...GSPX.utf8('<H'), ...parts.flat(), 62]; };
+  return seq(p);
 };
 GSPX.capRec = (mk, sx, sy) => { const tail = mk.length % 2 ? 3 : 4; return new GSPX.B().hex('fc080000').u32(18 + mk.length + tail - 2).u32(4).i16(sx).i16(sy).u16(mk.length).bytes(mk).zeros(tail).get(); };
 GSPX.MOVESP = { 2: 0, 6: 1, 15: 2, 0: 3 }; // 앱 이동 속도 → GSP 이동 버튼 속도 번호
@@ -4351,6 +4406,7 @@ function buildGSP() {
         if (par && par.some(v => !(v > 0))) throw 0; // 빠진 부모가 있으면 이 객체도 뺀다 (0 번 부모는 GSP 가 손상으로 봄)
         const [r, g, b] = GSPX.rgb(o ? o.color : 'ink');
         let e = opt.e ?? 0x121; if (o && opt.e == null && o.t !== 'point' && o.t !== 'value') { e = 0x120 + Math.max(1, Math.min(3, Math.round(o.w || 1))); if (o.dash) e = (o.dash === 2 ? 0x100 : 0x110) + (e & 0xf); } // 0x1SW: S 2=실선 1=파선 0=점선
+        if (o && o.t === 'point' && (e & 0xff) === 0x21 && e >= 256) e = (Math.max(1, Math.min(3, o.ps || 2)) << 8) | 0x21; // 점 크기
         const hid = (o && o.hidden) || opt.hidden ? 1 : 0;
         const h = new GSPX.B().u32(code | ((hid | (opt.fl || 0)) << 16)).u16(0).u16(c).u16(k).u16(e).u8(r).u8(g).u8(b).u8(0);
         if (opt.interior) h.hex('ff7f0000').zeros(8); else if (opt.pic) h.hex('ffff0000').zeros(8); else h.hex('ffff0000c1bdf0ff00000000');
@@ -4362,19 +4418,20 @@ function buildGSP() {
       const P1 = id => idx.get(id); const img77 = new Map(); // 반복 id:원본 id → 반복된 상(77) 번호
       const lab = (o, rs) => { const l = o.k === 'xf' || (o.t !== 'point' && !o.showLabel) ? null : GSPX.label(o); if (l) { const at = rs.length && rs[0][0] === 2201 ? 0 : rs.length; rs.splice(at, 0, [2005, l], [2008, Uint8Array.of(0, 0)]); } return rs; }; // 순서: 2002, 종류별 자료, 2005·2008 (단, 자유점은 2005·2008 뒤에 2201)
       const freePt = (o, x, y, opt = {}) => { const [px, py] = PX(x, y); return emit(0, 1, opt.k || 4, [], o, lab(o, [[2201, new GSPX.B().f64(px).f64(py).get()]]), { e: 0x221 }); };
-      const valRec = (o) => o.d.name ? [[2307, GSPX.disp(o.d.sx || 10, o.d.sy || 10, 3).get()], [2005, GSPX.valLabel(o.d.name)], [2008, Uint8Array.of(1, 0)]] : [[2307, GSPX.disp(o.d.sx || 10, o.d.sy || 10).get()], [2008, Uint8Array.of(1, 0)]]; // 이름 있는 측정값: 표시 방식 3 + 이름표(아래 첨자는 [n])
+      const valRec = (o) => o.d.name ? [[2307, GSPX.disp(o.d.sx || 10, o.d.sy || 10, 3, o.prec ?? 2).get()], [2005, GSPX.valLabel(o.d.name)], [2008, Uint8Array.of(1, 0)]] : [[2307, GSPX.disp(o.d.sx || 10, o.d.sy || 10, o.d.vonly ? 1 : 0, o.prec ?? 2).get()], [2008, Uint8Array.of(1, 0)]]; // 이름 있는 측정값: 표시 방식 3 + 이름표(아래 첨자는 [n])
       const exprRec = (o, toks, kind) => { // kind: calc | func | param
-        const b = new GSPX.B().bytes(GSPX.disp(o.d.sx || 10, o.d.sy || 10, kind === 'param' || (kind === 'calc' && o.d.name) ? 3 : 0).get()).hex('07090000').u32(60 + 2 * toks.length).u32(0x30).u16(toks.length);
+        const b = new GSPX.B().bytes(GSPX.disp(o.d.sx || 10, o.d.sy || 10, kind === 'param' || (kind === 'calc' && o.d.name) ? 3 : kind === 'calc' && o.d.vonly ? 1 : 0, o.prec ?? 2).get()).hex('07090000').u32(60 + 2 * toks.length).u32(0x30).u16(toks.length);
         if (kind === 'calc') b.u16(4).u16(0).u16(1).zeros(8).u32(4).zeros(28);
         else if (kind === 'func') b.u16(o.d.form === 'xy' ? 1 : 0).u16(8).u16(0).zeros(8).u32(4).zeros(28); // 1: x = f(y)
-        else { const v = +o.d.v || 0; b.u16(4).u16(10).u16(3).f64(o.d.step || 0.01).f64(o.d.min ?? -100).f64(o.d.max ?? 100).f64(v).f64(v); }
+        else { const v = +o.d.v || 0, gk = o.d.gpk || [10, 3]; b.u16(4).u16(gk[0]).u16(gk[1]).f64(o.d.step || 0.01).f64(o.d.min ?? -100).f64(o.d.max ?? 100).f64(v).f64(v); }
         toks.forEach(t => b.u16(t)); return b.get();
       };
       const kOf = o => o.t === 'polygon' ? GSPX.polyK(o.p.length) : (GSPX.CK[o.t] || [0, 0])[1];
       const cOf = o => o.t === 'polygon' ? 4 : (GSPX.CK[o.t] || [0, 0])[0];
       // 가져온 좌표축(숨은 보조 직선)은 GSP 의 축 객체(58)로 되돌린다
       const axisAux = new Set(); doc.objs.forEach(q => { if (q.t === 'point' && q.d && q.d.pich && q.hidden && doc.objs.every(c => !c.p.includes(q.id) || (c.t === 'picture' && c.k === 'pts'))) axisAux.add(q.id); }); // 그림의 보조 꼭짓점: 그림은 자기 행렬로 저장되므로 따로 쓰지 않음
-      doc.objs.forEach(l => { if (!l.isAxis) return; axisAux.add(l.id); const q = obj(l.p[1]); if (q && q.k === 'xf' && q.hidden && doc.objs.every(c => !c.p.includes(q.id) || c.isAxis)) axisAux.add(q.id); });
+      const axisOf = l => doc.objs.find(c => c.t === 'coord' && c.k !== 'given' && c.p[0] === l.p[0] && (l.p[1] === c.p[1] || l.p[1] === c.p[2] || (obj(l.p[1]) && obj(l.p[1]).k === 'xf' && obj(l.p[1]).p[0] === c.p[1])));
+      doc.objs.forEach(l => { if (!l.isAxis || !axisOf(l)) return; axisAux.add(l.id); /* 좌표계에 딸린 축만: 좌표계 없이 남은 축은 보통 직선으로 */ const q = obj(l.p[1]); if (q && q.k === 'xf' && q.hidden && doc.objs.every(c => !c.p.includes(q.id) || c.isAxis)) axisAux.add(q.id); });
       // 좌표계는 그 원점·단위점 바로 뒤에 쓴다: GSP 는 축 위의 점이 좌표계(61)보다 앞에 올 수 있고, 축(58)은 좌표계를 쓸 때 함께 나온다
       const order = doc.objs.filter(o => o.t !== 'coord' || o.k === 'given');
       for (const c of doc.objs) { if (c.t !== 'coord' || c.k === 'given') continue; const last = Math.max(-1, ...c.p.map(id => order.findIndex(x => x.id === id))); order.splice(last + 1, 0, c); }
@@ -4397,23 +4454,23 @@ function buildGSP() {
             const [O, U, Vy] = o.p; const UL = obj(U) && obj(U).k === 'unitlen' && isStraight(obj(obj(U).p[1])) ? obj(U) : null;
             if (UL && !Vy) { // 원점 + 단위 길이 선분: GSP 59(x축)·56(y 단위)·58(y축)·61
               const iO = P1(O), iS = P1(UL.p[1]); if (!iO || !iS) throw 0;
-              const ax = emit(59, 9, 38, [iO, iS], o, [[2309, new GSPX.B().u32(1).get()], [2005, GSPX.label({ label: 'x' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
+              const ax = emit(59, 9, 38, [iO, iS], { ...o, hidden: o.hidden || !!o.d.hx, color: o.d.cx || o.color }, [[2309, new GSPX.B().u32(1).get()], [2005, GSPX.label({ label: 'x' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
               const iY = emit(56, 1, 40, [ax], null, [[2003, new GSPX.B().u32(56).f64(10).get()]], { e: 0x221, fl: 4 });
-              const ay = emit(58, 9, 38, [iO, iY], o, [[2309, new GSPX.B().u32(0).get()], [2005, GSPX.label({ label: 'y' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
+              const ay = emit(58, 9, 38, [iO, iY], { ...o, hidden: o.hidden || !!o.d.hy, color: o.d.cy || o.color }, [[2309, new GSPX.B().u32(0).get()], [2005, GSPX.label({ label: 'y' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
               id = emit(61, 8, 39, [ax, ay], { color: '#c0c0c0', hidden: o.hidden || o.d.grid === false }, [[2308, new GSPX.B().u32(1).u32(0).get()]], { e: 0x120 });
               if (!csFirst) csFirst = id;
-              doc.objs.forEach(l => { if (l.isAxis && l.p[0] === O) idx.set(l.id, l.p[1] === U ? ax : ay); });
+              doc.objs.forEach(l => { if (l.isAxis && axisOf(l) === o) idx.set(l.id, l.p[1] === U ? ax : ay); });
             } else {
             const iO = P1(O), iU = P1(U); if (!iO || !iU) throw 0;
             const u = (obj(U).d.u || 1) * PXCM;
-            const ax = emit(58, 9, 38, [iO, iU], o, [[2309, new GSPX.B().u32(1).get()], [2005, GSPX.label({ label: 'x' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
+            const ax = emit(58, 9, 38, [iO, iU], { ...o, hidden: o.hidden || !!o.d.hx, color: o.d.cx || o.color }, [[2309, new GSPX.B().u32(1).get()], [2005, GSPX.label({ label: 'x' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
             let iY;
             if (Vy && obj(Vy)) { iY = emit(55, 1, 40, [iU], null, [[2003, new GSPX.B().u32(55).f64((obj(Vy).d.u || 1) * PXCM).get()]], { e: 0x221, hidden: obj(Vy).hidden ? 1 : 0 }); idx.set(Vy, iY); } // 세로 단위점도 다른 객체가 쓸 수 있게
             else iY = emit(54, 1, 40, [iU], null, [[2003, new GSPX.B().u32(54).f64(u).get()]], { e: 0x221, fl: 4 });
-            const ay = emit(58, 9, 38, [iO, iY], o, [[2309, new GSPX.B().u32(0).get()], [2005, GSPX.label({ label: 'y' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
+            const ay = emit(58, 9, 38, [iO, iY], { ...o, hidden: o.hidden || !!o.d.hy, color: o.d.cy || o.color }, [[2309, new GSPX.B().u32(0).get()], [2005, GSPX.label({ label: 'y' }, 7)], [2008, Uint8Array.of(1, 0)]], { e: 0x121 });
             id = emit(61, 8, 39, [ax, ay], { color: '#c0c0c0', hidden: o.hidden || o.d.grid === false }, [[2308, new GSPX.B().u32(1).u32(0).get()]], { e: 0x120 });
             if (!csFirst) csFirst = id;
-            doc.objs.forEach(l => { if (l.isAxis && l.p[0] === O) idx.set(l.id, l.p[1] === U ? ax : ay); });
+            doc.objs.forEach(l => { if (l.isAxis && axisOf(l) === o) idx.set(l.id, l.p[1] === U ? ax : ay); });
             }
           } else if (o.t === 'point' && o.k === 'unitlen' && isStraight(obj(o.p[1])) && doc.objs.some(c => c.t === 'coord' && c.p[1] === o.id && !c.p[2])) {
             idx.set(o.id, -1); continue; // 좌표계를 만들 때 59 로 씀
@@ -4569,13 +4626,13 @@ function buildGSP() {
               const r = b.get(); new DataView(r.buffer).setUint32(4, r.length, true); const w = 16 + 8 * String(o.d.text || '').length;
               id = emit(0, 10, 23, [], o, [[2310, r], [2005, l], [2008, Uint8Array.of(1, 0)], [2210, new GSPX.B().i16(sx).i16(sy).i16(sx + w).i16(sy + 19).get()]]);
             }
-          } else if (id == null && o.t === 'table' && o.k === 'tab') { // 표 (GSP 91): 칸 내용은 글자로
+          } else if (id == null && o.t === 'table' && o.k === 'tab') { // 표 (GSP 91): 칸 내용은 글자로 — 머리의 두 수는 (행 수 + 2, 열 수 + 1), 행 수에는 실시간 행도 든다
             const p = o.p.map(P1); if (!p.length || p.some(v => !(v > 0))) throw 0;
             const T = s => { const u = GSPX.utf8(String(s)); return '<T' + u.length.toString(16).toUpperCase() + 'x' + String(s) + '>'; };
             const cell = v => '<H' + T(cellStr(v)) + '>';
             const heads = tableHeads(o); const rows = (o.d.rows || []).concat([o.p.map(id => cellVal(id))]);
-            const mk = '0'.repeat(heads.length + 2) + heads.map(h => '<SS2' + T(h) + '>').join('') + rows.map(r => '0' + r.map(cell).join('')).join('');
-            const mb = GSPX.utf8(mk); const b = new GSPX.B().hex('0d090000').u32(0).u32(0x10).i16(o.d.sx || 10).i16(o.d.sy || 10).u16(heads.length + 3).u16(rows.length).u16(1).zeros(6).bytes(mb).u8(0); if (b.a.length % 2) b.u8(0);
+            const mk = '0'.repeat(heads.length + 2) + heads.map(h => T(h)).join('') + rows.map(r => '0' + r.map(cell).join('')).join('');
+            const mb = GSPX.utf8(mk); const b = new GSPX.B().hex('0d090000').u32(0).u32(0x10).i16(o.d.sx || 10).i16(o.d.sy || 10).u16(rows.length + 2).u16(heads.length + 1).u16(1).zeros(6).bytes(mb).u8(0); if (b.a.length % 2) b.u8(0);
             const r = b.get(); new DataView(r.buffer).setUint32(4, r.length, true);
             id = emit(91, 17, 83, p, o, [[2317, r], [2008, Uint8Array.of(1, 0)]]);
           } else if (id == null && o.t === 'iter' && o.k === 'geo') {
