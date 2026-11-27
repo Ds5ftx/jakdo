@@ -128,6 +128,7 @@ function init() {
   $('#m-stop').onclick = () => stopAnim(); $('#m-slow').onclick = () => { speedK = Math.max(0.1, speedK / 1.5); updateMotion(); }; $('#m-fast').onclick = () => { speedK = Math.min(8, speedK * 1.5); updateMotion(); };
 }
 function fitView() {
+  if (doc.space) { Object.assign(doc.space.cam, spaceNew().cam); requestDraw(); return; }
   const pts = []; for (const o of doc.objs) { if (o.hidden) continue; const g = G[o.id]; if (!g) continue; if (o.t === 'point') pts.push(g); else if (o.t === 'circle') pts.push(vsub(g.c, { x: g.r, y: g.r }), vadd(g.c, { x: g.r, y: g.r })); }
   if (!pts.length) { view.s = PXCM; view.ox = W / 2; view.oy = H / 2; refresh(); return; }
   const x0 = Math.min(...pts.map(p => p.x)), x1 = Math.max(...pts.map(p => p.x)), y0 = Math.min(...pts.map(p => p.y)), y1 = Math.max(...pts.map(p => p.y));

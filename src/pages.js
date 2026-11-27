@@ -17,7 +17,7 @@ function showPage(i, opts = {}) {
   doc = pg.doc; reindex(); Object.assign(view, pg.view && pg.view.s ? pg.view : defaultView());
   sel = (pg._sel || []).filter(id => byId.has(id));
   undoStack = pg._undo || (pg._undo = []); redoStack = pg._redo || (pg._redo = []);
-  dirty = true; draw(); renderTabs(); refresh(); scheduleSave();
+  dirty = true; spaceUI(); draw(); renderTabs(); refresh(); scheduleSave();
 }
 function addPage(name, d, v, at) {
   stashPage();

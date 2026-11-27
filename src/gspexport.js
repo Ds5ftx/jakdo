@@ -483,7 +483,7 @@ function buildGSP() {
       if (csFirst) W.rec(9005, new GSPX.B().u32(csFirst).get());
       W.rec(1001, new Uint8Array(0)); W.rec(903, new Uint8Array(0));
     };
-    book.pages.forEach((pg, pi) => writeSec(pg, pi));
+    book.pages.forEach((pg, pi) => { writeSec(pg, pi); if (pg.doc && pg.doc.space) { skipped += pg.doc.space.objs.length; GSPX.skips.push('3d:' + pg.name); } }); // 3D 페이지는 GSP에 없어 빈 페이지로
     // 사용자 도구: 주어진 것과 도구 객체로 임시 문서를 만들어 도구 구역으로 저장
     const tools = []; const seenT = new Set(); book.pages.forEach(pg => (pg.doc.tools || []).forEach(t => { if (!seenT.has(t)) { seenT.add(t); tools.push(t); } }));
     let nTools = 0;

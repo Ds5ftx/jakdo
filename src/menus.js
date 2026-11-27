@@ -236,6 +236,7 @@ const MENUS = [
     ...(isStandalone() ? [{ label: '인쇄…', run: printSketch }] : []),
     sep,
     { label: '새 페이지', run: () => addPage() },
+    { label: '새 3D 페이지 (공간좌표)', run: () => addSpacePage() },
     { label: '페이지 복제', run: () => duplicatePage(book.cur) },
     { label: '페이지 이름 바꾸기', run: () => renamePageDlg(book.cur) },
     { label: '페이지 삭제…', run: () => deletePage(book.cur), en: () => book.pages.length > 1 },
@@ -443,7 +444,7 @@ function menuItems(items, host, depth) {
 }
 function showMenu(i, btn) {
   closeMenus(); openMenu = i; btn.setAttribute('aria-expanded', 'true'); btn.classList.add('open');
-  const m = el('div', { class: 'menu top', role: 'menu', id: 'menu-pop' }); menuItems(MENUS[i].items, m, 0);
+  const m = el('div', { class: 'menu top', role: 'menu', id: 'menu-pop' }); menuItems(doc.space && ['작도', '변환', '측정', '수', '그래프'].includes(MENUS[i].name) ? [{ label: '3D 페이지에서는 쓰지 않는 메뉴입니다 (왼쪽 3D 도구·명령 입력을 쓰세요)', run: () => { }, en: () => false }] : MENUS[i].items, m, 0);
   $('#app').append(m); const r = btn.getBoundingClientRect(); m.style.left = Math.min(r.left, innerWidth - m.offsetWidth - 6) + 'px'; m.style.top = r.bottom + 'px';
 }
 function closeMenus() { openMenu = null; const m = $('#menu-pop'); if (m) m.remove(); document.querySelectorAll('.mb').forEach(b => { b.classList.remove('open'); b.setAttribute('aria-expanded', 'false'); }); }
@@ -511,6 +512,7 @@ function buildToolbox() {
     tb.append(b);
     if (t.id === 'arrow' || t.id === 'polygon' || t.id === 'custom') tb.append(el('div', { class: 'tsep' }));
   }
+  spaceToolbox(tb);
 }
 function showFlyout(t, b) {
   closeFlyout(); const r = b.getBoundingClientRect();

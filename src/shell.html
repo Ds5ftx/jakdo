@@ -181,6 +181,14 @@ body.big .ptab { padding: 12px 20px 13px; font-size: 15.5px; }
 body.big #zoom button { width: 52px; height: 48px; font-size: 22px; }
 body.big .btn { padding: 11px 20px; font-size: 16px; } body.big .dlg { width: min(560px, calc(100% - 24px)); font-size: 15px; }
 body.big #status { font-size: 14px; padding: 8px 14px; }
+/* 3D 페이지: 2D 도구 대신 3D 도구, 위쪽에 명령 입력 */
+.sp3 { display: none; flex-direction: column; gap: inherit; align-items: center; }
+body.space .sp3 { display: flex; }
+body.space #toolbox > .tool, body.space #toolbox > .tsep { display: none; }
+#sp3cmd { position: absolute; top: 10px; right: 10px; width: min(560px, calc(100% - 20px)); z-index: 5; }
+#sp3cmd[hidden] { display: none; }
+#sp3cmd input { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+body.big #sp3cmd input { font-size: 17px; padding: 12px 14px; }
 body.big .tp-b, body.big .tp-s, body.big .tp-x { min-width: 40px; height: 40px; font-size: 16px; } body.big .sw.sm { width: 28px; height: 28px; }
 button, .ptab, .mi, .fo { touch-action: manipulation; } /* 두 번 눌러 확대 막기 */
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

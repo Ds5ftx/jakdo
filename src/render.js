@@ -170,6 +170,7 @@ function draw() {
   if (THEME._paper == null) THEME._paper = THEME.paper; THEME.paper = doc.prefs.bg || THEME._paper;
   applyPalette();
   if (!exportNoBg) { ctx.fillStyle = THEME.paper; ctx.fillRect(0, 0, W, H); } else ctx.clearRect(0, 0, W, H);
+  if (doc.space) { drawSpace(); return; }
   const selSet = new Set(sel);
   const ordObjs = doc.objs.slice().sort((a, b) => (a.z || 0) - (b.z || 0));
   const vis = o => !o.hidden || showHiddenGhost;

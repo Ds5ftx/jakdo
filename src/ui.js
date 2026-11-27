@@ -94,6 +94,7 @@ function S() {
 function setSel(ids) { sel = [...new Set(ids)].filter(id => byId.has(id)); refresh(); }
 function selName(o) { return (TYPE_KO[o.t] || o.t) + (o.label && o.t !== 'value' ? ' ' + disp(o.label) : ''); }
 function updateStatus() {
+  if (doc.space) return refreshSpaceStatus();
   const s = S(); const tb = $('#status-sel');
   if (!s.n) tb.textContent = '선택 없음';
   else { const cnt = {}; for (const o of s.os) { const k = o.t === 'value' ? (o.k === 'param' ? '매개변수' : '값') : TYPE_KO[o.t]; cnt[k] = (cnt[k] || 0) + 1; } tb.textContent = '선택: ' + Object.entries(cnt).map(([k, v]) => k + ' ' + v + '개').join(', '); }
@@ -171,7 +172,7 @@ function drawCand(c, ctx) {
 
 /* ================= 포인터 입력 ================= */
 let drag = null, lastClick = { t: 0, id: null }, spaceDown = false;
-cv.addEventListener('contextmenu', e => { e.preventDefault(); openContext(e); });
+cv.addEventListener('contextmenu', e => { e.preventDefault(); if (doc.space) return; openContext(e); });
 /* 두 손가락: 벌리고 오므려 확대·축소, 함께 끌어 화면 이동. 두 번째 손가락이 닿으면 첫 손가락이 막 시작한 일(점 만들기·끌기)은 취소한다 */
 const touches = new Map(); let gestureBase = null;
 function touchPair() { const [a, b] = [...touches.values()]; return { c: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)) }; }
@@ -190,8 +191,9 @@ function touchEnd(e) {
   if (drag && (drag.mode === 'pinch' || drag.mode === 'afterpinch')) { drag = touches.size ? { mode: 'afterpinch' } : null; if (!touches.size) { gestureBase = null; scheduleSave(); } return true; } // 남은 손가락이 떨어질 때까지 다른 일은 하지 않음
   if (!touches.size) gestureBase = null; return false;
 }
-cv.addEventListener('pointercancel', e => { if (touchEnd(e)) return; if (drag && drag.mode !== 'pinch') { drag = null; marqueeBox = null; requestDraw(); } });
+cv.addEventListener('pointercancel', e => { if (doc.space) return spacePointer('cancel', e); if (touchEnd(e)) return; if (drag && drag.mode !== 'pinch') { drag = null; marqueeBox = null; requestDraw(); } });
 cv.addEventListener('pointerdown', e => {
+  if (doc.space) return spacePointer('down', e);
   if (e.pointerType === 'touch') {
     const r0 = cv.getBoundingClientRect(); touches.set(e.pointerId, { x: e.clientX - r0.left, y: e.clientY - r0.top });
     if (touches.size >= 2) { try { cv.setPointerCapture(e.pointerId); } catch (er) { } if (touches.size === 2) startPinch(); return; }
@@ -216,6 +218,7 @@ cv.addEventListener('pointerdown', e => {
   if (tool === 'info') return infoClick(sx, sy, e);
 });
 cv.addEventListener('pointermove', e => {
+  if (doc.space) return spacePointer('move', e);
   const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top; cursorS = { x: sx, y: sy };
   if (e.pointerType === 'touch' && touches.has(e.pointerId)) touches.set(e.pointerId, { x: sx, y: sy });
   if (drag && drag.mode === 'pinch') { if (touches.size >= 2) movePinch(); return; }
@@ -231,6 +234,7 @@ cv.addEventListener('pointermove', e => {
   }
 });
 cv.addEventListener('pointerup', e => {
+  if (doc.space) return spacePointer('up', e);
   const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
   if (touchEnd(e)) return;
   if (drag) { dragEnd(sx, sy, e); return; }
@@ -242,10 +246,11 @@ cv.addEventListener('pointerup', e => {
 });
 cv.addEventListener('pointerleave', () => { if (!drag) { hoverId = null; hoverCand = null; requestDraw(); } });
 cv.addEventListener('wheel', e => {
+  if (doc.space) return spacePointer('wheel', e);
   e.preventDefault(); const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
   const k = Math.exp(-e.deltaY * (e.deltaMode ? 0.05 : 0.0015)); zoomAt(sx, sy, k);
 }, { passive: false });
-function zoomAt(sx, sy, k) { const ns = clamp(view.s * k, 3, 3000); k = ns / view.s; view.ox = sx - (sx - view.ox) * k; view.oy = sy - (sy - view.oy) * k; view.s = ns; dirty = true; requestDraw(); scheduleSave(); }
+function zoomAt(sx, sy, k) { if (doc.space) { const c = doc.space.cam; c.s = clamp(c.s * k, 8, 600); requestDraw(); scheduleSave(); return; } const ns = clamp(view.s * k, 3, 3000); k = ns / view.s; view.ox = sx - (sx - view.ox) * k; view.oy = sy - (sy - view.oy) * k; view.s = ns; dirty = true; requestDraw(); scheduleSave(); }
 
 function toolOverlay(c2) {
   const tool = toolState.id, cand = hoverCand;
@@ -824,7 +829,7 @@ async function fileSaveAs(kind) { // 「다른 이름으로 저장」: 형식은
   fileSaved({ handle: null, name: base + '.' + kind, kind }); if (out.r) toast('저장했습니다' + lossNote(out)); return true;
 }
 window.addEventListener('beforeunload', e => { if (curFile && isModified()) { e.preventDefault(); e.returnValue = ''; } }); // 연 파일에 저장하지 않은 변경이 있으면 닫기 전에 묻는다
-function exportPNG() { if (doc.prefs.exportFormat === 'svg') return exportSVG(); exportPNGScaled(); }
+function exportPNG() { if (doc.prefs.exportFormat === 'svg' && !doc.space) return exportSVG(); exportPNGScaled(); }
 function archiveList() { try { return JSON.parse(localStorage.getItem('jakdo-archive') || '[]'); } catch (e) { return []; } }
 function archiveSet(a) { try { localStorage.setItem('jakdo-archive', JSON.stringify(a)); return true; } catch (e) { toast('브라우저 저장소를 사용할 수 없습니다'); return false; } }
 
@@ -833,9 +838,10 @@ document.addEventListener('keydown', e => {
   if (e.target.closest('input,textarea,select,[contenteditable]')) return;
   const k = e.key, mod_ = e.ctrlKey || e.metaKey;
   if (k === ' ') { spaceDown = true; return; }
+  if (doc.space && !mod_) { spaceKey(e); return; }
   if (mod_) {
     const map = { z: e.shiftKey ? redo : undo, y: redo, a: selectAll, c: copySel, v: paste, x: () => { copySel(); deleteSel(); }, l: () => can.straight() && C.straight('segment'), m: () => can.midpoint() && C.midpoint(), i: () => can.intersect() && C.intersect(), p: () => can.polyInt() && C.polyInt(), k: toggleLabels, h: hideSel, t: toggleTrace, b: eraseTraces, s: e.shiftKey ? () => fileSaveAs() : fileSave, o: fileOpen, '=': () => calcDialog(), '+': () => calcDialog(), e: () => exportPNG() };
-    const f = map[k.toLowerCase()]; if (f) { e.preventDefault(); f(); }
+    const f = map[k.toLowerCase()]; if (f && doc.space && !'zysoe'.includes(k.toLowerCase())) { e.preventDefault(); return; } if (f) { e.preventDefault(); f(); }
     return;
   }
   if (k === 'Escape') { if (dlgStack.length) { dlgStack[dlgStack.length - 1](false); return; } if (pending || polyPts.length) return cancelPending(); if (toolState.id !== 'arrow') return setTool('arrow'); setSel([]); $('#infopop').hidden = true; return; }
