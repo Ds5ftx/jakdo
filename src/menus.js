@@ -288,6 +288,7 @@ const MENUS = [
     { label: '점 크기', sub: () => [[1, '작게'], [2, '보통'], [3, '크게']].map(([v, l]) => ({ label: l, run: () => setProp(o => o.ps = v), en: () => S().pts.length > 0 })) },
     { label: '색', sub: () => [...Object.keys(PALETTE).map(k => ({ label: PAL_KO[k], swatch: col(k), run: () => setProp(o => { o.color = k; delete o.pc; }), en: () => sel.length > 0 })), sep, { label: '다른 색…', run: () => otherColorDlg(), en: () => sel.length > 0 }, { label: '색 메뉴 편집…', run: paletteEditDlg }, { label: '매개변수 색…', run: paramColorDlg, en: () => { const s = S(); const v = s.vals.filter(x => !isFnObj(x)).length; return (v === 1 || v === 3) && s.n > v; } }] },
     { label: '텍스트 팔레트 보이기/숨기기', run: () => toggleTextPalette(), check: () => paletteOn },
+    { label: '큰 버튼 모드 (태블릿·전자칠판)', run: () => { setBigUI(!bigUI); toast(bigUI ? '큰 버튼 모드를 켰습니다 · 두 손가락으로 확대·이동' : '큰 버튼 모드를 껐습니다'); }, check: () => bigUI },
     sep,
     { label: '레이블 보이기/숨기기', key: 'Ctrl+K', run: toggleLabels, en: () => sel.length > 0 },
     { label: '레이블 붙이기…', run: labelManyDlg, en: () => sel.length > 0 },

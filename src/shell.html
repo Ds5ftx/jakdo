@@ -169,6 +169,20 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
   .tool { width: 36px; height: 36px; }
   .dlg.modeless { right: 12px; left: 12px; width: auto; }
 }
+/* 큰 버튼 모드 (태블릿·전자칠판): 손가락으로 누르기 쉬운 크기 */
+body.big .mb { padding: 13px 16px; font-size: 16px; }
+body.big .icon-btn { width: 46px; height: 46px; } body.big .icon-btn svg { width: 24px; height: 24px; }
+body.big .tool { width: 58px; height: 58px; border-radius: 10px; } body.big .tool svg { width: 30px; height: 30px; }
+body.big .tvar { border-width: 6px; right: 4px; bottom: 4px; }
+body.big #toolbox { gap: 4px; padding: 8px 6px; }
+body.big .mi { padding: 12px 14px 12px 8px; font-size: 16px; grid-template-columns: 22px 1fr auto; } body.big .menu { min-width: 280px; }
+body.big .fo { padding: 12px 16px 12px 8px; font-size: 16px; }
+body.big .ptab { padding: 12px 20px 13px; font-size: 15.5px; }
+body.big #zoom button { width: 52px; height: 48px; font-size: 22px; }
+body.big .btn { padding: 11px 20px; font-size: 16px; } body.big .dlg { width: min(560px, calc(100% - 24px)); font-size: 15px; }
+body.big #status { font-size: 14px; padding: 8px 14px; }
+body.big .tp-b, body.big .tp-s, body.big .tp-x { min-width: 40px; height: 40px; font-size: 16px; } body.big .sw.sm { width: 28px; height: 28px; }
+button, .ptab, .mi, .fo { touch-action: manipulation; } /* 두 번 눌러 확대 막기 */
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 <div id="app">

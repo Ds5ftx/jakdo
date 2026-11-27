@@ -147,7 +147,7 @@ function labelAnchor(o, g) {
 function defaultLabelOffset(o) { return o.t === 'point' ? { x: 7, y: -16 } : isInterior(o) ? { x: -6, y: -8 } : { x: 6, y: -18 }; }
 
 function drawPointMark(p, o, selected, hover) {
-  const r = [0, 2.6, 3.7, 5.2][o.ps || 2];
+  const r = [0, 2.6, 3.7, 5.2][o.ps || 2] * (bigUI ? 1.45 : 1); // 큰 버튼 모드에서는 점도 크게
   if (selected) { ctx.beginPath(); ctx.arc(p.x, p.y, r + 5, 0, TAU); ctx.strokeStyle = THEME.sel; ctx.lineWidth = 2; ctx.setLineDash([]); ctx.stroke(); }
   if (hover) { ctx.beginPath(); ctx.arc(p.x, p.y, r + 4, 0, TAU); ctx.fillStyle = rgba(THEME.hover, 0.28) || THEME.hover; ctx.fill(); }
   ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, TAU); ctx.fillStyle = colOf(o); ctx.fill();
@@ -316,6 +316,11 @@ function drawScreenObj(o, selected, hover) {
 
 /* ================= 선택 판정 ================= */
 let touchMode = false;
+// 큰 버튼 모드: 처음에는 손가락이 주 입력인 기기(태블릿·전자칠판)에서 켜지고, 표시 메뉴에서 바꿀 수 있다 (브라우저에 기억)
+let bigUI = (() => { try { const v = localStorage.getItem('jakdo-bigui'); if (v != null) return v === '1'; } catch (e) { } try { return matchMedia('(pointer: coarse)').matches; } catch (e) { return false; } })();
+function hitTol(base) { return bigUI ? Math.max(base, 20) : touchMode ? Math.max(base, 14) : base; } // 누를 자리를 찾는 너그러움(px)
+function setBigUI(on) { bigUI = !!on; try { localStorage.setItem('jakdo-bigui', bigUI ? '1' : '0'); } catch (e) { } document.body.classList.toggle('big', bigUI); if (typeof resize === 'function') resize(); requestDraw(); }
+try { document.body.classList.toggle('big', bigUI); } catch (e) { }
 function distSeg(p, a, b) { const d = vsub(b, a), dd = vdot(d, d); const t = dd < 1e-9 ? 0 : clamp(vdot(vsub(p, a), d) / dd, 0, 1); return vdist(p, lerp(a, b, t)); }
 function hitDist(o, g, P) {
   if (!g) return Infinity;
@@ -360,7 +365,7 @@ function insideInterior(o, g, P) {
 // 반환 {id, part} 또는 null
 function hitTest(sx, sy, filter = () => true) {
   if (dirty) recompute();
-  const P = { x: sx, y: sy }, tol = touchMode ? 14 : 7;
+  const P = { x: sx, y: sy }, tol = hitTol(7);
   const vis = o => (!o.hidden || showHiddenGhost) && filter(o);
   const objs = doc.objs;
   for (let i = objs.length - 1; i >= 0; i--) { const o = objs[i]; if (isScreenObj(o) && vis(o) && o._bb) { const b = o._bb; if (sx >= b.x - 2 && sx <= b.x + b.w + 2 && sy >= b.y - 2 && sy <= b.y + b.h + 2) return { id: o.id, part: 'obj' }; } }

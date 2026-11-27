@@ -142,7 +142,7 @@ function cancelPending() { pending = null; polyPts = []; overlay = null; hoverCa
 function snapW(w) { if (doc.prefs.snap && doc.coordId && G[doc.coordId]) { const c = G[doc.coordId], q = wToC(c, w); return cToW(c, Math.round(q.x), Math.round(q.y)); } return w; }
 function candidateAt(sx, sy, exclude = []) {
   if (dirty) recompute();
-  const tol = touchMode ? 14 : 8;
+  const tol = hitTol(8);
   let bp = null, bd = tol;
   for (const o of doc.objs) { if (o.t !== 'point' || o.hidden || exclude.includes(o.id)) continue; const g = G[o.id]; if (!okp(g)) continue; const d = vdist(toS(g), { x: sx, y: sy }); if (d < bd) { bd = d; bp = o; } }
   if (bp) return { kind: 'pt', id: bp.id, s: toS(G[bp.id]) };
@@ -172,7 +172,31 @@ function drawCand(c, ctx) {
 /* ================= 포인터 입력 ================= */
 let drag = null, lastClick = { t: 0, id: null }, spaceDown = false;
 cv.addEventListener('contextmenu', e => { e.preventDefault(); openContext(e); });
+/* 두 손가락: 벌리고 오므려 확대·축소, 함께 끌어 화면 이동. 두 번째 손가락이 닿으면 첫 손가락이 막 시작한 일(점 만들기·끌기)은 취소한다 */
+const touches = new Map(); let gestureBase = null;
+function touchPair() { const [a, b] = [...touches.values()]; return { c: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)) }; }
+function startPinch() {
+  if (gestureBase != null && undoStack.length > gestureBase) { const s0 = undoStack[gestureBase]; undoStack.length = gestureBase; restore(s0); } // 첫 손가락이 만든 것 되돌리기
+  if (pending && !byId.has(pending.p1)) pending = null; if (typeof polyPts !== 'undefined' && polyPts.length) polyPts = polyPts.filter(id => byId.has(id));
+  marqueeBox = null; overlay = null; hoverCand = null; hoverId = null;
+  const p = touchPair(); drag = { mode: 'pinch', c0: p.c, d0: p.d, ox: view.ox, oy: view.oy, s0: view.s }; refresh();
+}
+function movePinch() {
+  const p = touchPair(), d = drag, ns = clamp(d.s0 * p.d / d.d0, 3, 3000), k = ns / d.s0;
+  view.s = ns; view.ox = p.c.x - (d.c0.x - d.ox) * k; view.oy = p.c.y - (d.c0.y - d.oy) * k; dirty = true; requestDraw();
+}
+function touchEnd(e) {
+  if (e.pointerType !== 'touch') return false; touches.delete(e.pointerId);
+  if (drag && (drag.mode === 'pinch' || drag.mode === 'afterpinch')) { drag = touches.size ? { mode: 'afterpinch' } : null; if (!touches.size) { gestureBase = null; scheduleSave(); } return true; } // 남은 손가락이 떨어질 때까지 다른 일은 하지 않음
+  if (!touches.size) gestureBase = null; return false;
+}
+cv.addEventListener('pointercancel', e => { if (touchEnd(e)) return; if (drag && drag.mode !== 'pinch') { drag = null; marqueeBox = null; requestDraw(); } });
 cv.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'touch') {
+    const r0 = cv.getBoundingClientRect(); touches.set(e.pointerId, { x: e.clientX - r0.left, y: e.clientY - r0.top });
+    if (touches.size >= 2) { try { cv.setPointerCapture(e.pointerId); } catch (er) { } if (touches.size === 2) startPinch(); return; }
+    gestureBase = undoStack.length;
+  }
   touchMode = e.pointerType === 'touch'; closeMenus(); closeContext();
   const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top; cursorS = { x: sx, y: sy };
   if (e.button === 2) return;
@@ -193,6 +217,9 @@ cv.addEventListener('pointerdown', e => {
 });
 cv.addEventListener('pointermove', e => {
   const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top; cursorS = { x: sx, y: sy };
+  if (e.pointerType === 'touch' && touches.has(e.pointerId)) touches.set(e.pointerId, { x: sx, y: sy });
+  if (drag && drag.mode === 'pinch') { if (touches.size >= 2) movePinch(); return; }
+  if (drag && drag.mode === 'afterpinch') return;
   if (drag) return dragMove(sx, sy, e);
   const tool = toolState.id;
   if (tool === 'arrow' || tool === 'text' || tool === 'info' || tool === 'marker') { const h = hitTest(sx, sy); const nid = h ? h.id : null; if (nid !== hoverId) { hoverId = nid; requestDraw(); balloonAt(sx, sy, nid); } }
@@ -205,6 +232,7 @@ cv.addEventListener('pointermove', e => {
 });
 cv.addEventListener('pointerup', e => {
   const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
+  if (touchEnd(e)) return;
   if (drag) { dragEnd(sx, sy, e); return; }
   const tool = toolState.id;
   if ((tool === 'compass' || tool === 'straight') && pending) {
@@ -293,7 +321,7 @@ function dragMove(sx, sy, e) {
   if (d.mode === 'marquee') { d.x = sx; d.y = sy; marqueeSelect(d); return; }
   if (d.mode === 'label') { const o = obj(d.id); o.lo = { x: d.lo.x + sx - d.sx, y: d.lo.y + sy - d.sy }; d.moved = true; requestDraw(); return; }
   if (d.mode === 'press') {
-    if (vdist({ x: sx, y: sy }, { x: d.sx, y: d.sy }) < (touchMode ? 6 : 3)) return;
+    if (vdist({ x: sx, y: sy }, { x: d.sx, y: d.sy }) < (touchMode || bigUI ? 6 : 3)) return;
     if (!d.was) { sel = d.shift ? [...sel, d.id] : [d.id]; }
     beginMove(d); d.moved = true;
   }

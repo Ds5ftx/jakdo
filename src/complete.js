@@ -153,7 +153,7 @@ function drawMeshPicture(o, g, selected, hover) {
 function pictureHandleAt(sx, sy) {
   if (sel.length !== 1) return null; const o = obj(sel[0]); if (!o || o.t !== 'picture' || !(o.k === 'free' || (o.k === 'pts' && o.p.length === 1))) return null;
   const g = G[o.id]; if (!g) return null; const BR = toS(vadd(g.TR, vsub(g.BL, g.TL)));
-  return vdist(BR, { x: sx, y: sy }) < (touchMode ? 16 : 9) ? o : null;
+  return vdist(BR, { x: sx, y: sy }) < hitTol(9) + (touchMode || bigUI ? 4 : 0) ? o : null;
 }
 function drawPictureHandle() {
   if (sel.length !== 1) return; const o = obj(sel[0]); if (!o || o.t !== 'picture' || !(o.k === 'free' || (o.k === 'pts' && o.p.length === 1))) return; const g = G[o.id]; if (!g) return;
